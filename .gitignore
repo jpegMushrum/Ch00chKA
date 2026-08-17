@@ -12,3 +12,9 @@ AI_module/*.db-shm
 
 # Platform-specific bundled tools
 ffmpeg.exe
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/

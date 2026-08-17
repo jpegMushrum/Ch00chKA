@@ -2,37 +2,35 @@ import asyncio
 import logging
 import shutil
 from aiogram import Bot, Dispatcher
-from config import config
-from handlers import some_logic
-from AI_module import database, core
+from ch00chka.bootstrap import build_application
+from config import load_settings
 
 
-def validate_runtime_dependencies():
-    required_binaries = ("ffmpeg", "ffprobe", "node")
-    missing = [name for name in required_binaries if shutil.which(name) is None]
+def log_optional_runtime_dependencies() -> None:
+    optional_binaries = ("ffmpeg", "ffprobe", "node")
+    missing = [name for name in optional_binaries if shutil.which(name) is None]
     if missing:
-        raise RuntimeError(
-            "Не найдены системные зависимости: "
-            f"{', '.join(missing)}. Используйте Docker-образ или установите их в PATH."
+        logging.warning(
+            "Медиазагрузчики частично недоступны: в PATH отсутствуют %s",
+            ", ".join(missing),
         )
 
-async def main():
-    # Включаем логирование в консоль
+
+async def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
-    validate_runtime_dependencies()
-    await database.init_talker_db()
-    
-    # Инициализируем бота, забирая токен в скрытом виде
-    bot = Bot(token=config.bot_token.get_secret_value())
-    dp = Dispatcher()
+    config = load_settings()
+    log_optional_runtime_dependencies()
+    application = build_application(config)
+    await application.repository.initialize()
 
-    # Подключаем групповой роутер к главному диспетчеру
-    dp.include_router(some_logic.router)
+    async with Bot(token=config.bot_token.get_secret_value()) as bot:
+        dp = Dispatcher()
+        dp.include_router(application.router)
 
-    # Запуск Long Polling опроса. Бот начинает слушать сервера Telegram.
-    print("Бот успешно запущен через Long Polling...")
-    await dp.start_polling(bot)
+        print("Бот успешно запущен через Long Polling...")
+        await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

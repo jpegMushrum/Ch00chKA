@@ -8,6 +8,13 @@ services:
     environment:
       bot_token: ${BOT_TOKEN:?Set BOT_TOKEN in .env}
       AI_api_token: ${AI_API_TOKEN:?Set AI_API_TOKEN in .env}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+      AI_PARTICIPATION_MODEL: ${AI_PARTICIPATION_MODEL:-deepseek-v4-flash}
+      AI_OBSERVER_MODEL: ${AI_OBSERVER_MODEL:-deepseek-v4-flash}
+      AI_THINKING_ENABLED: ${AI_THINKING_ENABLED:-false}
+      AI_OBSERVER_ENABLED: ${AI_OBSERVER_ENABLED:-true}
+      AI_RECENT_MESSAGES_LIMIT: ${AI_RECENT_MESSAGES_LIMIT:-30}
       DB_PATH: /data/bot_talker_memory.db
     volumes:
       - bot-data:/data
