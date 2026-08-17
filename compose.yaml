@@ -1,0 +1,16 @@
+services:
+  bot:
+    build:
+      context: .
+    image: ch00chka-bot:latest
+    init: true
+    restart: unless-stopped
+    environment:
+      bot_token: ${BOT_TOKEN:?Set BOT_TOKEN in .env}
+      AI_api_token: ${AI_API_TOKEN:?Set AI_API_TOKEN in .env}
+      DB_PATH: /data/bot_talker_memory.db
+    volumes:
+      - bot-data:/data
+
+volumes:
+  bot-data:

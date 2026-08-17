@@ -9,3 +9,6 @@ handlers\www.youtube.com_cookies.txt
 AI_module/bot_talker_memory.db
 AI_module/*.db-wal
 AI_module/*.db-shm
+
+# Platform-specific bundled tools
+ffmpeg.exe

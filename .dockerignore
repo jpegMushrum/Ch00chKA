@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.venv
+__pycache__/
+*.py[cod]
+*.db
+*.db-wal
+*.db-shm
+ffmpeg.exe
+video_*.mp4
+*_cookies.txt
+*_cookies.json

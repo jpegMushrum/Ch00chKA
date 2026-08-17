@@ -42,7 +42,6 @@ def send_video(func):
 def download_youtube_video(url: str, output_path: str = "video.mp4") -> str | None:
     time.sleep(3)
     ydl_opts = {
-        'cookiefile': 'youtube_cookies.txt', 
         'remote_components': ['ejs:github'], 
         'js_runtimes': {'node': {}}, 
         'format': 'bestvideo+bestaudio[filesize_approx<=48M]/best[filesize_approx<=48M]',
@@ -58,6 +57,10 @@ def download_youtube_video(url: str, output_path: str = "video.mp4") -> str | No
         'quiet': True,
         'no_warnings': True,
     }
+
+    cookie_file = os.getenv("YOUTUBE_COOKIE_FILE")
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -78,13 +81,14 @@ def download_pornhub_video(url: str, output_path: str = "video.mp4") -> str | No
         'quiet': True,
         'no_warnings': True,
         
-        # Ссылаемся на сохраненный файл с куками
-        'cookiefile': 'pornhub_cookies.txt',
         'referer': 'https://www.pornhub.com/',
         
         'no_check_certificate': True,
         'prefer_insecure': True,
     }
+    cookie_file = os.getenv("PORNHUB_COOKIE_FILE")
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])

@@ -1,13 +1,16 @@
-import aiosqlite
-import os
-
 import os
 import aiosqlite
 
 AI_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = os.path.join(AI_MODULE_DIR, "bot_talker_memory.db")
+DB_NAME = os.getenv(
+    "DB_PATH",
+    os.path.join(AI_MODULE_DIR, "bot_talker_memory.db"),
+)
 
 async def init_talker_db():
+    db_dir = os.path.dirname(os.path.abspath(DB_NAME))
+    os.makedirs(db_dir, exist_ok=True)
+
     async with aiosqlite.connect(DB_NAME) as db:
         #Окно
         await db.execute('''
