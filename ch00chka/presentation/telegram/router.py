@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class MediaAdapter(Protocol):
-    async def handle(self, message: types.Message) -> None: ...
+    async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None: ...
 
 
 class NoopMediaAdapter:
-    async def handle(self, message: types.Message) -> None:
+    async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None:
         return None
 
 
@@ -31,7 +31,7 @@ def _extract_urls(message: types.Message) -> tuple[str, ...]:
     for entity in entities:
         if entity.type not in (MessageEntityType.URL, MessageEntityType.TEXT_LINK):
             continue
-        url = entity.url or text[entity.offset : entity.offset + entity.length]
+        url = entity.url or entity.extract_from(text)
         if url:
             urls.append(url)
     return tuple(urls)
@@ -124,13 +124,14 @@ def create_router(
             if normalized.is_reply_to_bot or normalized.mentions_bot:
                 await message.reply("Не получилось сформировать ответ. Попробуй ещё раз чуть позже.")
 
-        has_media_action = bool(
-            result
-            and any(action.type is ActionType.MEDIA_DOWNLOAD for action in result.plan.actions)
+        media_urls = tuple(
+            str(action.payload["url"])
+            for action in (result.plan.actions if result else ())
+            if action.type is ActionType.MEDIA_DOWNLOAD and action.payload.get("url")
         )
-        if has_media_action:
+        if media_urls:
             try:
-                await media_adapter.handle(message)
+                await media_adapter.handle(message, media_urls)
             except Exception:
                 logger.exception("Media adapter failed for message %s", message.message_id)
                 await message.reply("Не получилось обработать ссылку на медиа.")

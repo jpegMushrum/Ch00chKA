@@ -9,5 +9,6 @@ __pycache__/
 *.db-shm
 ffmpeg.exe
 video_*.mp4
+data/
 *_cookies.txt
 *_cookies.json

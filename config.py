@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 
 
 class Settings(BaseSettings):
@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     ai_recent_messages_limit: int = 30
     telegram_drop_pending_updates: bool = True
     bot_aliases: str = ""
+    media_temp_dir: str = "data/media"
+    media_max_bytes: int = Field(default=48_000_000, gt=0)
+    media_max_duration_seconds: int = Field(default=600, gt=0)
+    media_max_concurrent_downloads: int = Field(default=2, gt=0)
     db_path: str = "AI_module/bot_talker_memory.db"
     default_personality: str = (
         "Говори коротко, живо и по-человечески, обычным разговорным русским. "

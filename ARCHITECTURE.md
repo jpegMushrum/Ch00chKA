@@ -15,7 +15,10 @@
 6. Actor создаёт черновик ответа.
 7. Observer принимает, блокирует или запрашивает одну правку.
 8. Принятый ответ сохраняется и отправляется в Telegram.
-9. Legacy media adapter исполняет media actions отдельно от AI-контура.
+9. `YtDlpMediaAdapter` исполняет media actions отдельно от AI-контура. Он
+   принимает только allowlist доменов YouTube, TikTok и Instagram, скачивает
+   публичное видео через `yt-dlp`, приводит контейнер к MP4 через `ffmpeg` и
+   удаляет временные файлы после отправки.
 
 Observer не изменяет personality и не создаёт циклов саморедактирования.
 Версия системного контракта хранится в `ch00chka/ai/prompts.py`.
@@ -27,8 +30,7 @@ Observer не изменяет personality и не создаёт циклов �
 - `ch00chka/ai` — Participation, Actor, Observer, prompts и LLM gateway.
 - `ch00chka/infrastructure` — SQLite repository.
 - `ch00chka/presentation` — Telegram adapter.
-- `ch00chka/integrations` — внешние и временные legacy-адаптеры.
-- `handlers/load_video.py` — существующая реализация скачивания, пока без рефакторинга.
+- `ch00chka/integrations` — загрузчики медиа и другие внешние адаптеры.
 
 ## Тестирование агентов
 
@@ -53,3 +55,8 @@ Thinking mode управляется явно через `AI_THINKING_ENABLED`; 
 При старте накопившиеся Telegram updates удаляются, чтобы после простоя бот не
 отвечал на старую переписку. Это отключается через
 `TELEGRAM_DROP_PENDING_UPDATES=false`.
+
+Медиа по умолчанию ограничено 10 минутами и 48 МБ. Параметры меняются через
+`MEDIA_MAX_DURATION_SECONDS`, `MEDIA_MAX_BYTES` и `MEDIA_TEMP_DIR`. Cookies и
+аккаунты для первой версии не используются. Число одновременно работающих
+загрузчиков задаётся через `MEDIA_MAX_CONCURRENT_DOWNLOADS` (по умолчанию 2).

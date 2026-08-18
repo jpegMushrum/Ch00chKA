@@ -14,7 +14,7 @@ from ch00chka.ai.participation import LLMAgentParticipationDecider
 from ch00chka.application import MessageProcessor
 from ch00chka.application.planners import UrlActionPlanner
 from ch00chka.infrastructure import SQLiteConversationRepository
-from ch00chka.integrations.legacy_media import LegacyMediaAdapter
+from ch00chka.integrations.media import YtDlpMediaAdapter, YtDlpMediaDownloader
 from ch00chka.presentation.telegram import create_router
 from config import Settings
 
@@ -95,11 +95,17 @@ def build_application(settings: Settings) -> Application:
         action_planner=UrlActionPlanner(),
         observer_enabled=settings.ai_observer_enabled,
     )
+    media_downloader = YtDlpMediaDownloader(
+        temp_dir=settings.media_temp_dir,
+        max_bytes=settings.media_max_bytes,
+        max_duration_seconds=settings.media_max_duration_seconds,
+        max_concurrent_downloads=settings.media_max_concurrent_downloads,
+    )
     router = create_router(
         processor=processor,
         repository=repository,
         alias_registry=alias_registry,
-        media=LegacyMediaAdapter(),
+        media=YtDlpMediaAdapter(downloader=media_downloader),
     )
     return Application(
         router=router,

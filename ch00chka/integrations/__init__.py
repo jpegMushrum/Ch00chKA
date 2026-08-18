@@ -1,1 +1,1 @@
-"""Adapters for external services and legacy modules."""
+"""Adapters for external services."""
