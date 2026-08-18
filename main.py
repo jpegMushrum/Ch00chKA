@@ -25,6 +25,10 @@ async def main() -> None:
     await application.repository.initialize()
 
     async with Bot(token=config.bot_token.get_secret_value()) as bot:
+        if config.telegram_drop_pending_updates:
+            await bot.delete_webhook(drop_pending_updates=True)
+            logging.info("Накопившиеся Telegram updates пропущены")
+
         bot_identity = await bot.get_me()
         await application.configure_bot_identity(
             bot_name=bot_identity.first_name,

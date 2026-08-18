@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     ai_observer_enabled: bool = True
     ai_alias_generation_enabled: bool = True
     ai_recent_messages_limit: int = 30
+    telegram_drop_pending_updates: bool = True
     bot_aliases: str = ""
     db_path: str = "AI_module/bot_talker_memory.db"
     default_personality: str = (

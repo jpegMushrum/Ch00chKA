@@ -50,3 +50,6 @@ python -m unittest discover -s tests -v
 Thinking mode управляется явно через `AI_THINKING_ENABLED`; по умолчанию он выключен.
 Генерация вариантов имени управляется через `AI_ALIAS_GENERATION_ENABLED`, а
 ручные варианты перечисляются через запятую в `BOT_ALIASES`.
+При старте накопившиеся Telegram updates удаляются, чтобы после простоя бот не
+отвечал на старую переписку. Это отключается через
+`TELEGRAM_DROP_PENDING_UPDATES=false`.
