@@ -11,11 +11,14 @@ class Settings(BaseSettings):
     ai_observer_model: str = "deepseek-v4-flash"
     ai_thinking_enabled: bool = False
     ai_observer_enabled: bool = True
+    ai_alias_generation_enabled: bool = True
     ai_recent_messages_limit: int = 30
+    bot_aliases: str = ""
     db_path: str = "AI_module/bot_talker_memory.db"
     default_personality: str = (
-        "Отвечай коротко и непринужденно, используй разговорный русский язык. "
-        "Шути, если это уместно, и не перетягивай разговор на себя."
+        "Говори коротко, живо и по-человечески, обычным разговорным русским. "
+        "Отвечай сразу по делу, обычно одной-двумя фразами. Шути, если это "
+        "уместно, и не перетягивай разговор на себя. Не называй себя ботом или ИИ."
     )
 
     model_config = SettingsConfigDict(

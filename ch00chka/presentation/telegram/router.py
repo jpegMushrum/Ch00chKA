@@ -7,6 +7,7 @@ from aiogram import Bot, Router, types
 from aiogram.enums import ChatMemberStatus, MessageEntityType
 from aiogram.filters import Command
 
+from ch00chka.ai.aliases import BotAliasRegistry
 from ch00chka.application import MessageProcessor
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import ActionType, NormalizedMessage
@@ -47,6 +48,7 @@ def create_router(
     *,
     processor: MessageProcessor,
     repository: ConversationRepository,
+    alias_registry: BotAliasRegistry,
     media: MediaAdapter | None = None,
 ) -> Router:
     router = Router(name="group_messages")
@@ -93,6 +95,7 @@ def create_router(
         bot_user = bot_identity
         reply_from = message.reply_to_message.from_user if message.reply_to_message else None
         bot_username = bot_user.username or ""
+        known_aliases = alias_registry.aliases
         normalized = NormalizedMessage(
             chat_id=message.chat.id,
             message_id=message.message_id,
@@ -102,8 +105,12 @@ def create_router(
             chat_type=message.chat.type,
             bot_name=bot_user.first_name,
             bot_username=bot_user.username,
+            bot_aliases=known_aliases,
             is_reply_to_bot=bool(reply_from and reply_from.id == bot_user.id),
-            mentions_bot=bool(bot_username and f"@{bot_username.lower()}" in text.lower()),
+            mentions_bot=bool(
+                (bot_username and f"@{bot_username.lower()}" in text.lower())
+                or alias_registry.matches(text)
+            ),
             urls=_extract_urls(message),
         )
 

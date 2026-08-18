@@ -62,6 +62,10 @@ class LLMAgentParticipationDecider:
                     "role": "user",
                     "content": (
                         f"Чат: {message.chat_type}\n"
+                        f"Имя бота: {message.bot_name}\n"
+                        f"Username бота: @{message.bot_username or 'не задан'}\n"
+                        f"Варианты обращения к боту: "
+                        f"{', '.join(message.bot_aliases) or 'не заданы'}\n"
                         f"Недавний контекст:\n{transcript or 'Пусто'}\n\n"
                         f"Текущее сообщение от {message.user_name}: {message.text}"
                     ),

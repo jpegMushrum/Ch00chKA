@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from aiogram import Router
 
 from ch00chka.ai.actor import LLMAgentActor
+from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator
 from ch00chka.ai.context import RepositoryContextBuilder
 from ch00chka.ai.gateway import DeepSeekGateway
 from ch00chka.ai.observer import LLMAgentObserver
@@ -17,11 +19,42 @@ from ch00chka.presentation.telegram import create_router
 from config import Settings
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True, slots=True)
 class Application:
     router: Router
     repository: SQLiteConversationRepository
     processor: MessageProcessor
+    alias_registry: BotAliasRegistry
+    alias_generator: LLMAliasGenerator
+    configured_aliases: tuple[str, ...]
+    alias_generation_enabled: bool
+
+    async def configure_bot_identity(
+        self,
+        *,
+        bot_name: str,
+        bot_username: str | None,
+    ) -> None:
+        aliases = {*self.configured_aliases, bot_name}
+        if bot_username:
+            aliases.add(bot_username)
+
+        if self.alias_generation_enabled:
+            try:
+                aliases.update(
+                    await self.alias_generator.generate(
+                        bot_name=bot_name,
+                        bot_username=bot_username,
+                    )
+                )
+            except Exception:
+                logger.exception("Could not generate bot aliases; using configured aliases")
+
+        self.alias_registry.replace(aliases)
+        logger.info("Bot aliases initialized: %s", ", ".join(self.alias_registry.aliases))
 
 
 def build_application(settings: Settings) -> Application:
@@ -33,6 +66,14 @@ def build_application(settings: Settings) -> Application:
         api_key=settings.AI_api_token.get_secret_value(),
         base_url=settings.ai_base_url,
         thinking_enabled=settings.ai_thinking_enabled,
+    )
+    configured_aliases = tuple(
+        alias.strip() for alias in settings.bot_aliases.split(",") if alias.strip()
+    )
+    alias_registry = BotAliasRegistry(configured_aliases)
+    alias_generator = LLMAliasGenerator(
+        gateway=gateway,
+        model=settings.ai_participation_model,
     )
     participation = LLMAgentParticipationDecider(
         gateway=gateway,
@@ -57,6 +98,15 @@ def build_application(settings: Settings) -> Application:
     router = create_router(
         processor=processor,
         repository=repository,
+        alias_registry=alias_registry,
         media=LegacyMediaAdapter(),
     )
-    return Application(router=router, repository=repository, processor=processor)
+    return Application(
+        router=router,
+        repository=repository,
+        processor=processor,
+        alias_registry=alias_registry,
+        alias_generator=alias_generator,
+        configured_aliases=configured_aliases,
+        alias_generation_enabled=settings.ai_alias_generation_enabled,
+    )

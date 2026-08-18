@@ -25,6 +25,11 @@ async def main() -> None:
     await application.repository.initialize()
 
     async with Bot(token=config.bot_token.get_secret_value()) as bot:
+        bot_identity = await bot.get_me()
+        await application.configure_bot_identity(
+            bot_name=bot_identity.first_name,
+            bot_username=bot_identity.username,
+        )
         dp = Dispatcher()
         dp.include_router(application.router)
 

@@ -14,7 +14,9 @@ services:
       AI_OBSERVER_MODEL: ${AI_OBSERVER_MODEL:-deepseek-v4-flash}
       AI_THINKING_ENABLED: ${AI_THINKING_ENABLED:-false}
       AI_OBSERVER_ENABLED: ${AI_OBSERVER_ENABLED:-true}
+      AI_ALIAS_GENERATION_ENABLED: ${AI_ALIAS_GENERATION_ENABLED:-true}
       AI_RECENT_MESSAGES_LIMIT: ${AI_RECENT_MESSAGES_LIMIT:-30}
+      BOT_ALIASES: ${BOT_ALIASES:-}
       DB_PATH: /data/bot_talker_memory.db
     volumes:
       - bot-data:/data

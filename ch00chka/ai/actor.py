@@ -54,7 +54,7 @@ class LLMAgentActor:
             messages=messages,
             model=self._model,
             temperature=0.7 if not revision_instruction else 0.3,
-            max_tokens=400,
+            max_tokens=180,
         )
         return ActorResponse(
             text=text,

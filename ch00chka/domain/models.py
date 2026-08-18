@@ -39,6 +39,7 @@ class NormalizedMessage:
     chat_type: str
     bot_name: str
     bot_username: str | None = None
+    bot_aliases: tuple[str, ...] = ()
     is_reply_to_bot: bool = False
     mentions_bot: bool = False
     urls: tuple[str, ...] = ()

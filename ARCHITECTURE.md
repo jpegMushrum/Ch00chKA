@@ -5,7 +5,9 @@
 
 ## Обработка сообщения
 
-1. Telegram adapter преобразует `Message` в `NormalizedMessage`.
+1. Telegram adapter преобразует `Message` в `NormalizedMessage`. При запуске
+   один AI-запрос генерирует безопасные варианты обращения к боту; они
+   объединяются с `BOT_ALIASES` и проверяются до participation agent.
 2. `UrlActionPlanner` создаёт независимые media actions без знания о загрузчиках.
 3. `MessageProcessor` получает `ActionPlan` и запускает AI-контур отдельно.
 4. Participation agent решает только, нужен ли текстовый ответ.
@@ -46,3 +48,5 @@ python -m unittest discover -s tests -v
 Модели и endpoint меняются переменными `AI_MODEL`,
 `AI_PARTICIPATION_MODEL`, `AI_OBSERVER_MODEL` и `AI_BASE_URL`.
 Thinking mode управляется явно через `AI_THINKING_ENABLED`; по умолчанию он выключен.
+Генерация вариантов имени управляется через `AI_ALIAS_GENERATION_ENABLED`, а
+ручные варианты перечисляются через запятую в `BOT_ALIASES`.

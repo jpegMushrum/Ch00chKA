@@ -40,6 +40,8 @@ def make_message(**overrides) -> NormalizedMessage:
         "text": "Что думаешь?",
         "chat_type": "group",
         "bot_name": "Ch00chKA",
+        "bot_username": "ch00chka_bot",
+        "bot_aliases": ("чучка", "choochka"),
     }
     values.update(overrides)
     return NormalizedMessage(**values)
@@ -76,6 +78,8 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reason, ReplyReason.CONTINUATION)
         self.assertEqual(result.confidence, 0.8)
         self.assertIn("Предыдущее сообщение", gateway.calls[0]["messages"][1]["content"])
+        self.assertIn("чучка", gateway.calls[0]["messages"][1]["content"])
+        self.assertIn("Ch00chKA", gateway.calls[0]["messages"][1]["content"])
 
     async def test_string_false_is_not_treated_as_true(self):
         gateway = FakeGateway(
@@ -116,6 +120,8 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
         system_prompt = gateway.calls[0]["messages"][0]["content"]
         self.assertIn("Слишком длинный черновик", system_prompt)
         self.assertIn("Сократи", system_prompt)
+        self.assertIn("Не называй себя ботом", system_prompt)
+        self.assertEqual(gateway.calls[0]["max_tokens"], 180)
 
     async def test_observer_returns_structured_review(self):
         gateway = FakeGateway(
