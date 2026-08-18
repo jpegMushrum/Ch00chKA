@@ -101,7 +101,7 @@ class MessageProcessor:
             )
         review: ReviewResult | None = None
 
-        if self._observer_enabled:
+        if self._observer_enabled or response.incomplete:
             review = await self._review(context, response)
 
             if review.verdict is ReviewVerdict.BLOCK:
@@ -120,12 +120,18 @@ class MessageProcessor:
                     revision_instruction=revision_instruction,
                     previous_response=response.text,
                 )
-                review = await self._review(context, response)
-                if review.verdict is not ReviewVerdict.ACCEPT:
-                    return ProcessingResult(
-                        plan=plan,
-                        participation=decision,
-                        review=review,
+                if self._observer_enabled or response.incomplete:
+                    review = await self._review(context, response)
+                    if review.verdict is not ReviewVerdict.ACCEPT:
+                        return ProcessingResult(
+                            plan=plan,
+                            participation=decision,
+                            review=review,
+                        )
+                else:
+                    review = ReviewResult(
+                        verdict=ReviewVerdict.ACCEPT,
+                        violations=("truncation_recovered",),
                     )
 
         plan = plan.with_action(

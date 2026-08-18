@@ -18,12 +18,27 @@ class LLMAgentObserver:
         context: ConversationContext,
         response: ActorResponse,
     ) -> ReviewResult:
+        if response.truncated:
+            return ReviewResult(
+                verdict=ReviewVerdict.REVISE,
+                violations=("output_truncated",),
+                revision_instruction=(
+                    "Ответ оборвался из-за лимита. Сформулируй его заново короче, "
+                    "сохрани смысл и обязательно закончи мысль."
+                ),
+            )
+        if response.incomplete:
+            return ReviewResult(
+                verdict=ReviewVerdict.BLOCK,
+                violations=(f"incomplete_output:{response.finish_reason}",),
+            )
+
         payload = {
             "personality": context.personality,
             "current_message": context.current_message.text,
             "draft_response": response.text,
         }
-        raw = await self._gateway.complete(
+        completion = await self._gateway.complete(
             model=self._model,
             temperature=0.0,
             max_tokens=180,
@@ -32,7 +47,11 @@ class LLMAgentObserver:
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
         )
-        data = parse_json_object(raw)
+        if completion.incomplete:
+            raise RuntimeError(
+                f"Observer response was incomplete: {completion.finish_reason}"
+            )
+        data = parse_json_object(completion.text)
         try:
             verdict = ReviewVerdict(str(data.get("verdict", "block")))
         except ValueError:

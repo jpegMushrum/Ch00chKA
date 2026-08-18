@@ -4,6 +4,7 @@ import unittest
 
 from ch00chka.ai.actor import LLMAgentActor
 from ch00chka.ai.observer import LLMAgentObserver
+from ch00chka.ai.ports import LLMCompletion
 from ch00chka.ai.prompts import PROMPT_VERSION
 from ch00chka.ai.participation import LLMAgentParticipationDecider
 from ch00chka.domain import (
@@ -17,13 +18,14 @@ from ch00chka.domain import (
 
 
 class FakeGateway:
-    def __init__(self, response: str) -> None:
+    def __init__(self, response: str, finish_reason: str | None = "stop") -> None:
         self.response = response
+        self.finish_reason = finish_reason
         self.calls = []
 
     async def complete(self, **kwargs):
         self.calls.append(kwargs)
-        return self.response
+        return LLMCompletion(self.response, self.finish_reason)
 
 
 class FakeRepository:
@@ -121,7 +123,42 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Слишком длинный черновик", system_prompt)
         self.assertIn("Сократи", system_prompt)
         self.assertIn("Не называй себя ботом", system_prompt)
-        self.assertEqual(gateway.calls[0]["max_tokens"], 180)
+        self.assertIn("Мат, сарказм, подколы", system_prompt)
+        self.assertEqual(gateway.calls[0]["max_tokens"], 320)
+
+    async def test_actor_preserves_length_finish_reason(self):
+        gateway = FakeGateway("Оборванный ответ", finish_reason="length")
+        actor = LLMAgentActor(gateway=gateway, model="fake")
+
+        response = await actor.respond(self.make_context())
+
+        self.assertTrue(response.truncated)
+
+    async def test_observer_revises_truncated_draft_without_llm_call(self):
+        gateway = FakeGateway("unused")
+        observer = LLMAgentObserver(gateway=gateway, model="fake")
+
+        result = await observer.review(
+            self.make_context(),
+            ActorResponse("Оборванный", "fake", PROMPT_VERSION, "length"),
+        )
+
+        self.assertEqual(result.verdict, ReviewVerdict.REVISE)
+        self.assertEqual(result.violations, ("output_truncated",))
+        self.assertEqual(gateway.calls, [])
+
+    async def test_observer_blocks_other_incomplete_drafts(self):
+        gateway = FakeGateway("unused")
+        observer = LLMAgentObserver(gateway=gateway, model="fake")
+
+        result = await observer.review(
+            self.make_context(),
+            ActorResponse("Частичный ответ", "fake", PROMPT_VERSION, "content_filter"),
+        )
+
+        self.assertEqual(result.verdict, ReviewVerdict.BLOCK)
+        self.assertEqual(result.violations, ("incomplete_output:content_filter",))
+        self.assertEqual(gateway.calls, [])
 
     async def test_observer_returns_structured_review(self):
         gateway = FakeGateway(

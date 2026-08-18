@@ -52,7 +52,7 @@ class LLMAgentParticipationDecider:
             f"{item.user_name}: {item.text}" for item in recent[-self._recent_messages_limit :]
         )
 
-        raw = await self._gateway.complete(
+        completion = await self._gateway.complete(
             model=self._model,
             temperature=0.0,
             max_tokens=120,
@@ -72,7 +72,11 @@ class LLMAgentParticipationDecider:
                 },
             ],
         )
-        data = parse_json_object(raw)
+        if completion.incomplete:
+            raise RuntimeError(
+                f"Participation response was incomplete: {completion.finish_reason}"
+            )
+        data = parse_json_object(completion.text)
         should_reply = data.get("should_reply") is True
         reason = _MODEL_REASONS.get(str(data.get("reason", "no_value")), ReplyReason.NO_VALUE)
         confidence = float(data.get("confidence", 0.0))

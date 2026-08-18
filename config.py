@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     ai_observer_model: str = "deepseek-v4-flash"
     ai_thinking_enabled: bool = False
     ai_observer_enabled: bool = True
-    ai_alias_generation_enabled: bool = True
     ai_recent_messages_limit: int = 30
     telegram_drop_pending_updates: bool = True
     bot_aliases: str = ""
@@ -23,7 +22,8 @@ class Settings(BaseSettings):
     default_personality: str = (
         "Говори коротко, живо и по-человечески, обычным разговорным русским. "
         "Отвечай сразу по делу, обычно одной-двумя фразами. Шути, если это "
-        "уместно, и не перетягивай разговор на себя. Не называй себя ботом или ИИ."
+        "уместно, и не перетягивай разговор на себя. Можешь уместно материться, "
+        "подкалывать и высказываться резко. Не называй себя ботом или ИИ."
     )
 
     model_config = SettingsConfigDict(

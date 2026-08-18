@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -47,15 +48,56 @@ class SQLiteConversationRepository:
                     chat_id INTEGER PRIMARY KEY,
                     summary TEXT DEFAULT '',
                     personality TEXT DEFAULT '',
+                    aliases TEXT DEFAULT '[]',
                     last_message_time REAL
                 )
                 """
             )
+            async with db.execute("PRAGMA table_info(chat_meta)") as cursor:
+                columns = {str(row[1]) for row in await cursor.fetchall()}
+            if "aliases" not in columns:
+                await db.execute(
+                    "ALTER TABLE chat_meta ADD COLUMN aliases TEXT DEFAULT '[]'"
+                )
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_chat_history_chat_id_id
                 ON chat_history(chat_id, id)
                 """
+            )
+            await db.commit()
+
+    async def get_aliases(self, chat_id: int) -> tuple[str, ...]:
+        async with self._connection() as db:
+            async with db.execute(
+                "SELECT aliases FROM chat_meta WHERE chat_id = ?",
+                (chat_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+        if not row or not row[0]:
+            return ()
+        try:
+            values = json.loads(str(row[0]))
+        except (TypeError, ValueError):
+            return ()
+        if not isinstance(values, list):
+            return ()
+        return tuple(value for value in values if isinstance(value, str))
+
+    async def set_aliases(self, chat_id: int, aliases: Sequence[str]) -> None:
+        values = tuple(alias.strip() for alias in aliases if alias.strip())
+        if not values:
+            raise ValueError("Aliases cannot be empty")
+
+        async with self._connection() as db:
+            await db.execute(
+                """
+                INSERT INTO chat_meta (chat_id, aliases)
+                VALUES (?, ?)
+                ON CONFLICT(chat_id)
+                DO UPDATE SET aliases = excluded.aliases
+                """,
+                (chat_id, json.dumps(values, ensure_ascii=False)),
             )
             await db.commit()
 

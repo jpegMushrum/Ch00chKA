@@ -58,7 +58,7 @@ class FakeContextBuilder:
 
 
 class ScriptedActor:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str | tuple[str, str | None]]) -> None:
         self.responses = responses
         self.calls: list[str | None] = []
 
@@ -70,10 +70,13 @@ class ScriptedActor:
         previous_response=None,
     ):
         self.calls.append((revision_instruction, previous_response))
+        scripted = self.responses[len(self.calls) - 1]
+        text, finish_reason = scripted if isinstance(scripted, tuple) else (scripted, "stop")
         return ActorResponse(
-            text=self.responses[len(self.calls) - 1],
+            text=text,
             model="fake",
             prompt_version="test",
+            finish_reason=finish_reason,
         )
 
 
@@ -176,6 +179,35 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.reply_text)
         self.assertEqual([item.role for item in repository.messages], ["user"])
         self.assertEqual(len(actor.calls), 2)
+
+    async def test_truncated_response_is_revised_even_when_observer_is_disabled(self):
+        repository = FakeRepository()
+        actor = ScriptedActor(
+            [("Оборванный ответ", "length"), ("Законченный ответ.", "stop")]
+        )
+        observer = ScriptedObserver(
+            [
+                ReviewResult(
+                    ReviewVerdict.REVISE,
+                    violations=("output_truncated",),
+                    revision_instruction="Ответь заново короче и закончи мысль",
+                )
+            ]
+        )
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=observer,
+            observer_enabled=False,
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertEqual(result.reply_text, "Законченный ответ.")
+        self.assertEqual(observer.calls, 1)
+        self.assertEqual(result.review.violations, ("truncation_recovered",))
 
 
 if __name__ == "__main__":

@@ -5,15 +5,19 @@
 
 ## Обработка сообщения
 
-1. Telegram adapter преобразует `Message` в `NormalizedMessage`. При запуске
-   один AI-запрос генерирует безопасные варианты обращения к боту; они
-   объединяются с `BOT_ALIASES` и проверяются до participation agent.
+1. Telegram adapter преобразует `Message` в `NormalizedMessage`. Базовые
+   обращения состоят из имени, username и `BOT_ALIASES`. Администратор каждого
+   чата может задать исходные обращения через `/generate_aliases`; AI создаёт
+   производные, которые сохраняются в SQLite и проверяются до participation agent.
 2. `UrlActionPlanner` создаёт независимые media actions без знания о загрузчиках.
 3. `MessageProcessor` получает `ActionPlan` и запускает AI-контур отдельно.
 4. Participation agent решает только, нужен ли текстовый ответ.
 5. Context Builder собирает personality, summary и недавние сообщения.
 6. Actor создаёт черновик ответа.
 7. Observer принимает, блокирует или запрашивает одну правку.
+   `finish_reason` сохраняется вместе с черновиком: ответ, остановленный по
+   лимиту, всегда перегенерируется короче, а другие незавершённые ответы
+   блокируются и не попадают в чат.
 8. Принятый ответ сохраняется и отправляется в Telegram.
 9. `YtDlpMediaAdapter` исполняет media actions отдельно от AI-контура. Он
    принимает только allowlist доменов YouTube, TikTok и Instagram, скачивает
@@ -50,8 +54,9 @@ python -m unittest discover -s tests -v
 Модели и endpoint меняются переменными `AI_MODEL`,
 `AI_PARTICIPATION_MODEL`, `AI_OBSERVER_MODEL` и `AI_BASE_URL`.
 Thinking mode управляется явно через `AI_THINKING_ENABLED`; по умолчанию он выключен.
-Генерация вариантов имени управляется через `AI_ALIAS_GENERATION_ENABLED`, а
-ручные варианты перечисляются через запятую в `BOT_ALIASES`.
+Глобальные резервные обращения перечисляются через запятую в `BOT_ALIASES`.
+Алиасы конкретного чата настраиваются командами `/generate_aliases` и
+`/get_aliases`; менять их может только администратор.
 При старте накопившиеся Telegram updates удаляются, чтобы после простоя бот не
 отвечал на старую переписку. Это отключается через
 `TELEGRAM_DROP_PENDING_UPDATES=false`.

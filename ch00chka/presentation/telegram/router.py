@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Protocol
 
 from aiogram import Bot, Router, types
 from aiogram.enums import ChatMemberStatus, MessageEntityType
 from aiogram.filters import Command
 
-from ch00chka.ai.aliases import BotAliasRegistry
+from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_aliases
 from ch00chka.application import MessageProcessor
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import ActionType, NormalizedMessage
@@ -44,11 +45,19 @@ async def _is_chat_admin(message: types.Message, bot: Bot) -> bool:
     return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
 
 
+def _parse_alias_seeds(text: str) -> tuple[str, ...]:
+    payload = text.partition(" ")[2].strip()
+    if not payload:
+        return ()
+    return sanitize_aliases(re.split(r"[,;\n]+", payload))
+
+
 def create_router(
     *,
     processor: MessageProcessor,
     repository: ConversationRepository,
     alias_registry: BotAliasRegistry,
+    alias_generator: LLMAliasGenerator,
     media: MediaAdapter | None = None,
 ) -> Router:
     router = Router(name="group_messages")
@@ -60,7 +69,9 @@ def create_router(
         await message.reply(
             "Привет! Я помощник этого чата.\n"
             "/set_personality [текст] — настроить личность (только администратор).\n"
-            "/get_personality — показать текущую личность."
+            "/get_personality — показать текущую личность.\n"
+            "/generate_aliases чучка, чуч — задать обращения и создать производные.\n"
+            "/get_aliases — показать обращения этого чата."
         )
 
     @router.message(Command("set_personality"))
@@ -83,6 +94,50 @@ def create_router(
         personality = await repository.get_personality(message.chat.id)
         await message.reply(personality)
 
+    @router.message(Command("generate_aliases"))
+    async def generate_aliases_command(message: types.Message, bot: Bot) -> None:
+        if message.chat.type not in ("group", "supergroup"):
+            return
+        if not await _is_chat_admin(message, bot):
+            await message.reply("Менять обращения могут только администраторы чата.")
+            return
+
+        seeds = _parse_alias_seeds(message.text or "")
+        if not seeds:
+            await message.reply(
+                "Укажи исходные обращения через запятую, например: "
+                "/generate_aliases чучка, чуч, choochka"
+            )
+            return
+
+        bot_user = await bot.get_me()
+        generated = seeds
+        generation_failed = False
+        try:
+            generated = await alias_generator.generate(
+                bot_name=bot_user.first_name,
+                bot_username=bot_user.username,
+                seed_aliases=seeds,
+            )
+        except Exception:
+            generation_failed = True
+            logger.exception("Could not generate aliases for chat %s", message.chat.id)
+
+        await repository.set_aliases(message.chat.id, generated)
+        suffix = (
+            "\nПроизводные создать не удалось, поэтому сохранил исходные варианты."
+            if generation_failed
+            else ""
+        )
+        await message.reply("Обращения сохранены: " + ", ".join(generated) + suffix)
+
+    @router.message(Command("get_aliases"))
+    async def get_aliases_command(message: types.Message) -> None:
+        aliases = await repository.get_aliases(message.chat.id)
+        await message.reply(
+            "Обращения этого чата: " + (", ".join(aliases) if aliases else "не заданы")
+        )
+
     @router.message()
     async def process_group_message(message: types.Message, bot: Bot) -> None:
         nonlocal bot_identity
@@ -95,7 +150,9 @@ def create_router(
         bot_user = bot_identity
         reply_from = message.reply_to_message.from_user if message.reply_to_message else None
         bot_username = bot_user.username or ""
-        known_aliases = alias_registry.aliases
+        chat_aliases = await repository.get_aliases(message.chat.id)
+        message_aliases = BotAliasRegistry((*alias_registry.aliases, *chat_aliases))
+        known_aliases = message_aliases.aliases
         normalized = NormalizedMessage(
             chat_id=message.chat.id,
             message_id=message.message_id,
@@ -109,7 +166,7 @@ def create_router(
             is_reply_to_bot=bool(reply_from and reply_from.id == bot_user.id),
             mentions_bot=bool(
                 (bot_username and f"@{bot_username.lower()}" in text.lower())
-                or alias_registry.matches(text)
+                or message_aliases.matches(text)
             ),
             urls=_extract_urls(message),
         )

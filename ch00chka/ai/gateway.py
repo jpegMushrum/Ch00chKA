@@ -4,7 +4,7 @@ from typing import Sequence
 
 from openai import AsyncOpenAI
 
-from ch00chka.ai.ports import ChatMessagePayload
+from ch00chka.ai.ports import ChatMessagePayload, LLMCompletion
 
 class DeepSeekGateway:
     def __init__(
@@ -24,7 +24,7 @@ class DeepSeekGateway:
         model: str,
         temperature: float,
         max_tokens: int,
-    ) -> str:
+    ) -> LLMCompletion:
         response = await self._client.chat.completions.create(
             model=model,
             messages=list(messages),
@@ -38,4 +38,8 @@ class DeepSeekGateway:
         )
         if not response.choices or not response.choices[0].message.content:
             raise RuntimeError("LLM returned an empty response")
-        return response.choices[0].message.content.strip()
+        choice = response.choices[0]
+        return LLMCompletion(
+            text=choice.message.content.strip(),
+            finish_reason=str(choice.finish_reason) if choice.finish_reason else None,
+        )

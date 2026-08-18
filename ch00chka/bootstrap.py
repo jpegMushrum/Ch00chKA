@@ -28,9 +28,7 @@ class Application:
     repository: SQLiteConversationRepository
     processor: MessageProcessor
     alias_registry: BotAliasRegistry
-    alias_generator: LLMAliasGenerator
     configured_aliases: tuple[str, ...]
-    alias_generation_enabled: bool
 
     async def configure_bot_identity(
         self,
@@ -41,17 +39,6 @@ class Application:
         aliases = {*self.configured_aliases, bot_name}
         if bot_username:
             aliases.add(bot_username)
-
-        if self.alias_generation_enabled:
-            try:
-                aliases.update(
-                    await self.alias_generator.generate(
-                        bot_name=bot_name,
-                        bot_username=bot_username,
-                    )
-                )
-            except Exception:
-                logger.exception("Could not generate bot aliases; using configured aliases")
 
         self.alias_registry.replace(aliases)
         logger.info("Bot aliases initialized: %s", ", ".join(self.alias_registry.aliases))
@@ -105,6 +92,7 @@ def build_application(settings: Settings) -> Application:
         processor=processor,
         repository=repository,
         alias_registry=alias_registry,
+        alias_generator=alias_generator,
         media=YtDlpMediaAdapter(downloader=media_downloader),
     )
     return Application(
@@ -112,7 +100,5 @@ def build_application(settings: Settings) -> Application:
         repository=repository,
         processor=processor,
         alias_registry=alias_registry,
-        alias_generator=alias_generator,
         configured_aliases=configured_aliases,
-        alias_generation_enabled=settings.ai_alias_generation_enabled,
     )

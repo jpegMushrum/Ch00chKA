@@ -50,14 +50,15 @@ class LLMAgentActor:
             }
         )
 
-        text = await self._gateway.complete(
+        completion = await self._gateway.complete(
             messages=messages,
             model=self._model,
             temperature=0.7 if not revision_instruction else 0.3,
-            max_tokens=180,
+            max_tokens=320,
         )
         return ActorResponse(
-            text=text,
+            text=completion.text,
             model=self._model,
             prompt_version=context.prompt_version,
+            finish_reason=completion.finish_reason,
         )

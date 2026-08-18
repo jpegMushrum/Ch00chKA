@@ -73,6 +73,15 @@ class ActorResponse:
     text: str
     model: str
     prompt_version: str
+    finish_reason: str | None = None
+
+    @property
+    def truncated(self) -> bool:
+        return self.finish_reason == "length"
+
+    @property
+    def incomplete(self) -> bool:
+        return self.finish_reason not in (None, "stop")
 
 
 @dataclass(frozen=True, slots=True)
