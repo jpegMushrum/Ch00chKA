@@ -37,6 +37,16 @@ class LLMAgentObserver:
             "personality": context.personality,
             "current_message": context.current_message.text,
             "draft_response": response.text,
+            "research_performed": context.research_performed,
+            "research_facts": [
+                {
+                    "source": fact.source,
+                    "title": fact.title,
+                    "summary": fact.summary,
+                    "url": fact.url,
+                }
+                for fact in context.research_facts
+            ],
         }
         completion = await self._gateway.complete(
             model=self._model,

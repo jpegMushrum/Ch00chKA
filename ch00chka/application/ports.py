@@ -10,6 +10,7 @@ from ch00chka.domain import (
     NormalizedMessage,
     ParticipationDecision,
     ReviewResult,
+    ResearchResult,
 )
 
 
@@ -45,6 +46,10 @@ class ConversationRepository(Protocol):
 
 class ParticipationDecider(Protocol):
     async def decide(self, message: NormalizedMessage) -> ParticipationDecision: ...
+
+
+class Researcher(Protocol):
+    async def research(self, message: NormalizedMessage) -> ResearchResult: ...
 
 
 class ContextBuilder(Protocol):

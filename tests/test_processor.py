@@ -10,6 +10,10 @@ from ch00chka.domain import (
     NormalizedMessage,
     ParticipationDecision,
     ReplyReason,
+    ResearchDecision,
+    ResearchFact,
+    ResearchResult,
+    ResearchSource,
     ReviewResult,
     ReviewVerdict,
 )
@@ -61,6 +65,7 @@ class ScriptedActor:
     def __init__(self, responses: list[str | tuple[str, str | None]]) -> None:
         self.responses = responses
         self.calls: list[str | None] = []
+        self.contexts = []
 
     async def respond(
         self,
@@ -69,6 +74,7 @@ class ScriptedActor:
         revision_instruction=None,
         previous_response=None,
     ):
+        self.contexts.append(context)
         self.calls.append((revision_instruction, previous_response))
         scripted = self.responses[len(self.calls) - 1]
         text, finish_reason = scripted if isinstance(scripted, tuple) else (scripted, "stop")
@@ -89,6 +95,26 @@ class ScriptedObserver:
         review = self.reviews[self.calls]
         self.calls += 1
         return review
+
+
+class FakeResearcher:
+    async def research(self, message):
+        return ResearchResult(
+            decision=ResearchDecision(
+                needs_research=True,
+                reason="unknown_entity",
+                queries=("Ado Show",),
+                source_types=(ResearchSource.MUSIC,),
+            ),
+            facts=(
+                ResearchFact(
+                    source=ResearchSource.MUSIC,
+                    title="Ado — Show",
+                    summary="Песня",
+                    url="https://example.test/ado-show",
+                ),
+            ),
+        )
 
 
 class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
@@ -208,6 +234,24 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reply_text, "Законченный ответ.")
         self.assertEqual(observer.calls, 1)
         self.assertEqual(result.review.violations, ("truncation_recovered",))
+
+    async def test_research_facts_are_added_to_actor_context(self):
+        repository = FakeRepository()
+        actor = ScriptedActor(["Это песня Ado."])
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=ScriptedObserver([ReviewResult(ReviewVerdict.ACCEPT)]),
+            researcher=FakeResearcher(),
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertTrue(actor.contexts[0].research_performed)
+        self.assertEqual(actor.contexts[0].research_facts[0].title, "Ado — Show")
+        self.assertIsNotNone(result.research)
 
 
 if __name__ == "__main__":

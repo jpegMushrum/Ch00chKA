@@ -11,6 +11,7 @@ _MODEL_REASONS = {
     "direct_question": ReplyReason.DIRECT_QUESTION,
     "continuation": ReplyReason.CONTINUATION,
     "valuable_contribution": ReplyReason.VALUABLE_CONTRIBUTION,
+    "search_request": ReplyReason.SEARCH_REQUEST,
     "no_value": ReplyReason.NO_VALUE,
 }
 

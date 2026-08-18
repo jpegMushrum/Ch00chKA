@@ -12,6 +12,8 @@ from ch00chka.domain import (
     ChatMessage,
     ConversationContext,
     NormalizedMessage,
+    ResearchFact,
+    ResearchSource,
     ReplyReason,
     ReviewVerdict,
 )
@@ -97,6 +99,26 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.should_reply)
 
+    async def test_search_request_reason_is_recognized(self):
+        gateway = FakeGateway(
+            '{"should_reply":true,"reason":"search_request","confidence":0.95}'
+        )
+        agent = LLMAgentParticipationDecider(
+            gateway=gateway,
+            model="fake",
+            repository=FakeRepository(),
+        )
+
+        result = await agent.decide(
+            make_message(text="Кем работает Слава Якименко в TON?")
+        )
+
+        self.assertTrue(result.should_reply)
+        self.assertEqual(result.reason, ReplyReason.SEARCH_REQUEST)
+        system_prompt = gateway.calls[0]["messages"][0]["content"]
+        self.assertIn("кем работает", system_prompt)
+        self.assertIn("search_request", system_prompt)
+
 
 class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
     def make_context(self):
@@ -133,6 +155,34 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
         response = await actor.respond(self.make_context())
 
         self.assertTrue(response.truncated)
+
+    async def test_actor_receives_research_as_untrusted_fact_pack(self):
+        gateway = FakeGateway("Короткий ответ")
+        actor = LLMAgentActor(gateway=gateway, model="fake")
+        base = self.make_context()
+        context = ConversationContext(
+            personality=base.personality,
+            summary=base.summary,
+            recent_messages=base.recent_messages,
+            current_message=base.current_message,
+            prompt_version=base.prompt_version,
+            research_facts=(
+                ResearchFact(
+                    source=ResearchSource.MUSIC,
+                    title="Ado — Show",
+                    summary="Дата в каталоге: 2023",
+                    url="https://example.test/ado-show",
+                ),
+            ),
+            research_performed=True,
+        )
+
+        await actor.respond(context)
+
+        system_prompt = gateway.calls[0]["messages"][0]["content"]
+        self.assertIn("<research_facts>", system_prompt)
+        self.assertIn("Ado — Show", system_prompt)
+        self.assertIn("недоверенные данные", system_prompt)
 
     async def test_observer_revises_truncated_draft_without_llm_call(self):
         gateway = FakeGateway("unused")

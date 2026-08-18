@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from ch00chka.application.ports import (
     ActionPlanner,
@@ -9,6 +10,7 @@ from ch00chka.application.ports import (
     ConversationRepository,
     Observer,
     ParticipationDecider,
+    Researcher,
 )
 from ch00chka.domain import (
     ActionPlan,
@@ -20,6 +22,8 @@ from ch00chka.domain import (
     ReplyReason,
     ReviewResult,
     ReviewVerdict,
+    ResearchDecision,
+    ResearchResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,6 +32,16 @@ logger = logging.getLogger(__name__)
 class EmptyActionPlanner:
     async def plan(self, message: NormalizedMessage) -> ActionPlan:
         return ActionPlan()
+
+
+class NullResearcher:
+    async def research(self, message: NormalizedMessage) -> ResearchResult:
+        return ResearchResult(
+            decision=ResearchDecision(
+                needs_research=False,
+                reason="disabled",
+            )
+        )
 
 
 class MessageProcessor:
@@ -39,6 +53,7 @@ class MessageProcessor:
         context_builder: ContextBuilder,
         actor: Actor,
         observer: Observer,
+        researcher: Researcher | None = None,
         action_planner: ActionPlanner | None = None,
         observer_enabled: bool = True,
     ) -> None:
@@ -47,6 +62,7 @@ class MessageProcessor:
         self._context_builder = context_builder
         self._actor = actor
         self._observer = observer
+        self._researcher = researcher or NullResearcher()
         self._action_planner = action_planner or EmptyActionPlanner()
         self._observer_enabled = observer_enabled
 
@@ -82,8 +98,20 @@ class MessageProcessor:
         if not decision.should_reply:
             return ProcessingResult(plan=plan, participation=decision)
 
+        research: ResearchResult | None = None
+        try:
+            research = await self._researcher.research(message)
+        except Exception:
+            logger.exception("Research pipeline failed; continuing without external facts")
+
         try:
             context = await self._context_builder.build(message)
+            if research and research.decision.needs_research:
+                context = replace(
+                    context,
+                    research_facts=research.facts,
+                    research_performed=True,
+                )
             response = await self._actor.respond(context)
         except Exception:
             logger.exception("Actor pipeline failed")
@@ -98,6 +126,7 @@ class MessageProcessor:
                     verdict=ReviewVerdict.BLOCK,
                     violations=("actor_pipeline_unavailable",),
                 ),
+                research=research,
             )
         review: ReviewResult | None = None
 
@@ -109,6 +138,7 @@ class MessageProcessor:
                     plan=plan,
                     participation=decision,
                     review=review,
+                    research=research,
                 )
 
             if review.verdict is ReviewVerdict.REVISE:
@@ -127,6 +157,7 @@ class MessageProcessor:
                             plan=plan,
                             participation=decision,
                             review=review,
+                            research=research,
                         )
                 else:
                     review = ReviewResult(
@@ -151,6 +182,7 @@ class MessageProcessor:
             participation=decision,
             reply_text=response.text,
             review=review,
+            research=research,
         )
 
     async def _review(self, context, response) -> ReviewResult:

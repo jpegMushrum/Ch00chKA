@@ -11,10 +11,12 @@ from ch00chka.ai.context import RepositoryContextBuilder
 from ch00chka.ai.gateway import DeepSeekGateway
 from ch00chka.ai.observer import LLMAgentObserver
 from ch00chka.ai.participation import LLMAgentParticipationDecider
+from ch00chka.ai.research import LLMAgentResearcher
 from ch00chka.application import MessageProcessor
 from ch00chka.application.planners import UrlActionPlanner
 from ch00chka.infrastructure import SQLiteConversationRepository
 from ch00chka.integrations.media import YtDlpMediaAdapter, YtDlpMediaDownloader
+from ch00chka.integrations.research_sources import PublicResearchBackend
 from ch00chka.presentation.telegram import create_router
 from config import Settings
 
@@ -73,12 +75,26 @@ def build_application(settings: Settings) -> Application:
     )
     actor = LLMAgentActor(gateway=gateway, model=settings.ai_model)
     observer = LLMAgentObserver(gateway=gateway, model=settings.ai_observer_model)
+    researcher = None
+    if settings.ai_research_enabled:
+        researcher = LLMAgentResearcher(
+            gateway=gateway,
+            model=settings.ai_research_model,
+            repository=repository,
+            backend=PublicResearchBackend(
+                timeout_seconds=settings.research_timeout_seconds,
+                web_base_url=settings.research_web_base_url,
+            ),
+            cache_ttl_seconds=settings.research_cache_ttl_seconds,
+            max_facts=settings.research_max_facts,
+        )
     processor = MessageProcessor(
         repository=repository,
         participation=participation,
         context_builder=context_builder,
         actor=actor,
         observer=observer,
+        researcher=researcher,
         action_planner=UrlActionPlanner(),
         observer_enabled=settings.ai_observer_enabled,
     )

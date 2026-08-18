@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
+from ch00chka.domain import ResearchFact, ResearchSource
+
 
 ChatMessagePayload = dict[str, str]
 
@@ -30,3 +32,14 @@ class LLMGateway(Protocol):
         temperature: float,
         max_tokens: int,
     ) -> LLMCompletion: ...
+
+
+class ResearchBackend(Protocol):
+    async def search(
+        self,
+        *,
+        query: str,
+        source_types: Sequence[ResearchSource],
+        language: str,
+        limit: int,
+    ) -> Sequence[ResearchFact]: ...

@@ -11,6 +11,7 @@ class ReplyReason(StrEnum):
     DIRECT_QUESTION = "direct_question"
     CONTINUATION = "continuation"
     VALUABLE_CONTRIBUTION = "valuable_contribution"
+    SEARCH_REQUEST = "search_request"
     NO_VALUE = "no_value"
     DISABLED = "disabled"
     INVALID_MESSAGE = "invalid_message"
@@ -27,6 +28,12 @@ class ActionType(StrEnum):
     CHAT_REPLY = "chat_reply"
     MEDIA_DOWNLOAD = "media_download"
     COMMAND = "command"
+
+
+class ResearchSource(StrEnum):
+    MUSIC = "music"
+    ENCYCLOPEDIA = "encyclopedia"
+    WEB = "web"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +73,34 @@ class ConversationContext:
     recent_messages: tuple[ChatMessage, ...]
     current_message: NormalizedMessage
     prompt_version: str
+    research_facts: tuple["ResearchFact", ...] = ()
+    research_performed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchDecision:
+    needs_research: bool
+    reason: str
+    queries: tuple[str, ...] = ()
+    source_types: tuple[ResearchSource, ...] = ()
+    language: str = "ru"
+    confidence: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchFact:
+    source: ResearchSource
+    title: str
+    summary: str
+    url: str
+    published_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchResult:
+    decision: ResearchDecision
+    facts: tuple[ResearchFact, ...] = ()
+    from_cache: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,3 +146,4 @@ class ProcessingResult:
     participation: ParticipationDecision
     reply_text: str | None = None
     review: ReviewResult | None = None
+    research: ResearchResult | None = None

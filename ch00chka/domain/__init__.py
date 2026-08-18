@@ -9,6 +9,10 @@ from .models import (
     PlannedAction,
     ProcessingResult,
     ReplyReason,
+    ResearchDecision,
+    ResearchFact,
+    ResearchResult,
+    ResearchSource,
     ReviewResult,
     ReviewVerdict,
 )
@@ -24,6 +28,10 @@ __all__ = [
     "PlannedAction",
     "ProcessingResult",
     "ReplyReason",
+    "ResearchDecision",
+    "ResearchFact",
+    "ResearchResult",
+    "ResearchSource",
     "ReviewResult",
     "ReviewVerdict",
 ]

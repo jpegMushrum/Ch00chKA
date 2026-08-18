@@ -11,10 +11,16 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
       AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
       AI_PARTICIPATION_MODEL: ${AI_PARTICIPATION_MODEL:-deepseek-v4-flash}
+      AI_RESEARCH_MODEL: ${AI_RESEARCH_MODEL:-deepseek-v4-flash}
       AI_OBSERVER_MODEL: ${AI_OBSERVER_MODEL:-deepseek-v4-flash}
       AI_THINKING_ENABLED: ${AI_THINKING_ENABLED:-false}
       AI_OBSERVER_ENABLED: ${AI_OBSERVER_ENABLED:-true}
       AI_RECENT_MESSAGES_LIMIT: ${AI_RECENT_MESSAGES_LIMIT:-30}
+      AI_RESEARCH_ENABLED: ${AI_RESEARCH_ENABLED:-true}
+      RESEARCH_CACHE_TTL_SECONDS: ${RESEARCH_CACHE_TTL_SECONDS:-21600}
+      RESEARCH_TIMEOUT_SECONDS: ${RESEARCH_TIMEOUT_SECONDS:-8}
+      RESEARCH_MAX_FACTS: ${RESEARCH_MAX_FACTS:-6}
+      RESEARCH_WEB_BASE_URL: http://searxng:8080
       TELEGRAM_DROP_PENDING_UPDATES: ${TELEGRAM_DROP_PENDING_UPDATES:-true}
       BOT_ALIASES: ${BOT_ALIASES:-}
       MEDIA_TEMP_DIR: /data/media
@@ -22,8 +28,22 @@ services:
       MEDIA_MAX_DURATION_SECONDS: ${MEDIA_MAX_DURATION_SECONDS:-600}
       MEDIA_MAX_CONCURRENT_DOWNLOADS: ${MEDIA_MAX_CONCURRENT_DOWNLOADS:-2}
       DB_PATH: /data/bot_talker_memory.db
+    depends_on:
+      searxng:
+        condition: service_started
     volumes:
       - bot-data:/data
+
+  searxng:
+    image: searxng/searxng@sha256:3aed6b4bfb4e6a2b3b94c890dafb3f35cb2588493b83818434aa260e8bdeb4d4
+    init: true
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?Set SEARXNG_SECRET in .env}
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_LIMITER: "false"
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
 volumes:
   bot-data:

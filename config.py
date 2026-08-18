@@ -8,10 +8,16 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://api.deepseek.com"
     ai_model: str = "deepseek-v4-flash"
     ai_participation_model: str = "deepseek-v4-flash"
+    ai_research_model: str = "deepseek-v4-flash"
     ai_observer_model: str = "deepseek-v4-flash"
     ai_thinking_enabled: bool = False
     ai_observer_enabled: bool = True
     ai_recent_messages_limit: int = 30
+    ai_research_enabled: bool = True
+    research_cache_ttl_seconds: int = Field(default=21_600, gt=0)
+    research_timeout_seconds: float = Field(default=8.0, gt=0)
+    research_max_facts: int = Field(default=6, gt=0, le=12)
+    research_web_base_url: str | None = None
     telegram_drop_pending_updates: bool = True
     bot_aliases: str = ""
     media_temp_dir: str = "data/media"
@@ -31,6 +37,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
 
 def load_settings() -> Settings:
     return Settings()
