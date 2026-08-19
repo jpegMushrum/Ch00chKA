@@ -37,6 +37,14 @@ class ResearchSource(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ReferencedMessage:
+    message_id: int
+    user_name: str
+    text: str
+    is_bot: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizedMessage:
     chat_id: int
     message_id: int
@@ -50,6 +58,8 @@ class NormalizedMessage:
     is_reply_to_bot: bool = False
     mentions_bot: bool = False
     urls: tuple[str, ...] = ()
+    reply_to_message: ReferencedMessage | None = None
+    quoted_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

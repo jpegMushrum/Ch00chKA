@@ -11,7 +11,7 @@ from aiogram.filters import Command
 from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_aliases
 from ch00chka.application import MessageProcessor
 from ch00chka.application.ports import ConversationRepository
-from ch00chka.domain import ActionType, NormalizedMessage
+from ch00chka.domain import ActionType, NormalizedMessage, ReferencedMessage
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,21 @@ def _parse_alias_seeds(text: str) -> tuple[str, ...]:
     if not payload:
         return ()
     return sanitize_aliases(re.split(r"[,;\n]+", payload))
+
+
+def _message_author(message: types.Message) -> str:
+    if message.from_user:
+        return message.from_user.full_name
+    if message.sender_chat:
+        return message.sender_chat.title
+    return "Неизвестный участник"
+
+
+def _reference_text(message: types.Message, *, limit: int = 2_000) -> str:
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        text = "[сообщение без текста]"
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def create_router(
@@ -149,6 +164,7 @@ def create_router(
             bot_identity = await bot.get_me()
         bot_user = bot_identity
         reply_from = message.reply_to_message.from_user if message.reply_to_message else None
+        replied_message = message.reply_to_message
         bot_username = bot_user.username or ""
         chat_aliases = await repository.get_aliases(message.chat.id)
         message_aliases = BotAliasRegistry((*alias_registry.aliases, *chat_aliases))
@@ -169,6 +185,21 @@ def create_router(
                 or message_aliases.matches(text)
             ),
             urls=_extract_urls(message),
+            reply_to_message=(
+                ReferencedMessage(
+                    message_id=replied_message.message_id,
+                    user_name=_message_author(replied_message),
+                    text=_reference_text(replied_message),
+                    is_bot=bool(reply_from and reply_from.is_bot),
+                )
+                if replied_message
+                else None
+            ),
+            quoted_text=(
+                message.quote.text[:1_000]
+                if message.quote and message.quote.text
+                else None
+            ),
         )
 
         result = None

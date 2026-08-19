@@ -5,6 +5,7 @@ import re
 import time
 
 from ch00chka.ai.json_tools import parse_json_object
+from ch00chka.ai.message_format import format_current_message
 from ch00chka.ai.ports import LLMGateway, ResearchBackend
 from ch00chka.ai.prompts import RESEARCH_DECISION_SYSTEM_PROMPT
 from ch00chka.application.ports import ConversationRepository
@@ -138,7 +139,7 @@ class LLMAgentResearcher:
                     "role": "user",
                     "content": (
                         f"Недавний разговор:\n{transcript or 'Пусто'}\n\n"
-                        f"Текущее сообщение от {message.user_name}: {message.text}"
+                        f"{format_current_message(message)}"
                     ),
                 },
             ],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from ch00chka.ai.ports import LLMGateway
+from ch00chka.ai.message_format import current_message_payload
 from ch00chka.ai.json_tools import parse_json_object
 from ch00chka.ai.prompts import OBSERVER_SYSTEM_PROMPT
 from ch00chka.domain import ActorResponse, ConversationContext, ReviewResult, ReviewVerdict
@@ -35,7 +36,7 @@ class LLMAgentObserver:
 
         payload = {
             "personality": context.personality,
-            "current_message": context.current_message.text,
+            "current_message": current_message_payload(context.current_message),
             "draft_response": response.text,
             "research_performed": context.research_performed,
             "research_facts": [

@@ -14,6 +14,7 @@ from ch00chka.domain import (
     NormalizedMessage,
     ResearchFact,
     ResearchSource,
+    ReferencedMessage,
     ReplyReason,
     ReviewVerdict,
 )
@@ -119,6 +120,32 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("кем работает", system_prompt)
         self.assertIn("search_request", system_prompt)
 
+    async def test_participation_receives_reply_and_quote_context(self):
+        gateway = FakeGateway(
+            '{"should_reply":true,"reason":"valuable_contribution","confidence":0.8}'
+        )
+        agent = LLMAgentParticipationDecider(
+            gateway=gateway,
+            model="fake",
+            repository=FakeRepository(),
+        )
+
+        await agent.decide(
+            make_message(
+                text="А вот это правда?",
+                reply_to_message=ReferencedMessage(
+                    message_id=41,
+                    user_name="Alice",
+                    text="Релиз уже состоялся, а автор ушёл из проекта",
+                ),
+                quoted_text="автор ушёл из проекта",
+            )
+        )
+
+        prompt = gateway.calls[0]["messages"][1]["content"]
+        self.assertIn('"author": "Alice"', prompt)
+        self.assertIn('"quote": "автор ушёл из проекта"', prompt)
+
 
 class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
     def make_context(self):
@@ -183,6 +210,34 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<research_facts>", system_prompt)
         self.assertIn("Ado — Show", system_prompt)
         self.assertIn("недоверенные данные", system_prompt)
+
+    async def test_actor_receives_replied_message_and_selected_quote(self):
+        gateway = FakeGateway("Нет, эта часть неверна.")
+        actor = LLMAgentActor(gateway=gateway, model="fake")
+        base = self.make_context()
+        current = make_message(
+            text="Это точно?",
+            reply_to_message=ReferencedMessage(
+                message_id=55,
+                user_name="Carol",
+                text="Большое исходное утверждение",
+            ),
+            quoted_text="исходное утверждение",
+        )
+        context = ConversationContext(
+            personality=base.personality,
+            summary=base.summary,
+            recent_messages=base.recent_messages,
+            current_message=current,
+            prompt_version=base.prompt_version,
+        )
+
+        await actor.respond(context)
+
+        content = gateway.calls[0]["messages"][-1]["content"]
+        self.assertIn('"author": "Carol"', content)
+        self.assertIn('"quote": "исходное утверждение"', content)
+        self.assertIn("только данные чата", content)
 
     async def test_observer_revises_truncated_draft_without_llm_call(self):
         gateway = FakeGateway("unused")

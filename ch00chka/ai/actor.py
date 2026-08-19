@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from ch00chka.ai.ports import LLMGateway
+from ch00chka.ai.message_format import format_current_message
 from ch00chka.ai.prompts import ACTOR_CONTRACT
 from ch00chka.domain import ActorResponse, ConversationContext
 
@@ -68,7 +69,7 @@ class LLMAgentActor:
         messages.append(
             {
                 "role": "user",
-                "content": f"{context.current_message.user_name}: {context.current_message.text}",
+                "content": format_current_message(context.current_message),
             }
         )
 
