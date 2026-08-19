@@ -30,7 +30,6 @@ class Application:
     repository: SQLiteConversationRepository
     processor: MessageProcessor
     alias_registry: BotAliasRegistry
-    configured_aliases: tuple[str, ...]
 
     async def configure_bot_identity(
         self,
@@ -38,7 +37,7 @@ class Application:
         bot_name: str,
         bot_username: str | None,
     ) -> None:
-        aliases = {*self.configured_aliases, bot_name}
+        aliases = {bot_name}
         if bot_username:
             aliases.add(bot_username)
 
@@ -56,10 +55,7 @@ def build_application(settings: Settings) -> Application:
         base_url=settings.ai_base_url,
         thinking_enabled=settings.ai_thinking_enabled,
     )
-    configured_aliases = tuple(
-        alias.strip() for alias in settings.bot_aliases.split(",") if alias.strip()
-    )
-    alias_registry = BotAliasRegistry(configured_aliases)
+    alias_registry = BotAliasRegistry(())
     alias_generator = LLMAliasGenerator(
         gateway=gateway,
         model=settings.ai_participation_model,
@@ -100,21 +96,29 @@ def build_application(settings: Settings) -> Application:
     )
     media_downloader = YtDlpMediaDownloader(
         temp_dir=settings.media_temp_dir,
-        max_bytes=settings.media_max_bytes,
-        max_duration_seconds=settings.media_max_duration_seconds,
+        max_bytes=settings.effective_media_max_bytes,
+        max_duration_seconds=settings.effective_media_max_duration_seconds,
         max_concurrent_downloads=settings.media_max_concurrent_downloads,
+        proxy_url=(
+            settings.media_proxy_url.get_secret_value()
+            if settings.media_proxy_url
+            else None
+        ),
+        cookies_file=settings.media_cookies_file or None,
     )
     router = create_router(
         processor=processor,
         repository=repository,
         alias_registry=alias_registry,
         alias_generator=alias_generator,
-        media=YtDlpMediaAdapter(downloader=media_downloader),
+        media=YtDlpMediaAdapter(
+            downloader=media_downloader,
+            upload_chunk_size=settings.telegram_upload_chunk_size,
+        ),
     )
     return Application(
         router=router,
         repository=repository,
         processor=processor,
         alias_registry=alias_registry,
-        configured_aliases=configured_aliases,
     )

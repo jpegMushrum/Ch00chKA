@@ -2,8 +2,10 @@ import asyncio
 import logging
 import shutil
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from ch00chka.bootstrap import build_application
-from config import load_settings
+from config import Settings, load_settings
 
 
 def log_optional_runtime_dependencies() -> None:
@@ -16,6 +18,23 @@ def log_optional_runtime_dependencies() -> None:
         )
 
 
+def create_bot(config: Settings) -> Bot:
+    token = config.bot_token.get_secret_value()
+    api_base_url = config.effective_telegram_api_base_url
+    if not api_base_url:
+        return Bot(token=token)
+
+    api = TelegramAPIServer.from_base(
+        api_base_url,
+        is_local=True,
+    )
+    session = AiohttpSession(
+        api=api,
+        timeout=config.telegram_api_request_timeout_seconds,
+    )
+    return Bot(token=token, session=session)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
@@ -24,7 +43,7 @@ async def main() -> None:
     application = build_application(config)
     await application.repository.initialize()
 
-    async with Bot(token=config.bot_token.get_secret_value()) as bot:
+    async with create_bot(config) as bot:
         if config.telegram_drop_pending_updates:
             await bot.delete_webhook(drop_pending_updates=True)
             logging.info("Накопившиеся Telegram updates пропущены")

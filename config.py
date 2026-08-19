@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr
 
@@ -19,11 +21,22 @@ class Settings(BaseSettings):
     research_max_facts: int = Field(default=6, gt=0, le=12)
     research_web_base_url: str | None = None
     telegram_drop_pending_updates: bool = True
-    bot_aliases: str = ""
+    telegram_api_mode: Literal["cloud", "local"] = "cloud"
+    telegram_api_base_url: str = ""
+    telegram_api_request_timeout_seconds: int = Field(default=300, gt=0)
+    telegram_upload_chunk_size: int = Field(
+        default=1_048_576,
+        ge=65_536,
+        le=4_194_304,
+    )
     media_temp_dir: str = "data/media"
     media_max_bytes: int = Field(default=48_000_000, gt=0)
     media_max_duration_seconds: int = Field(default=600, gt=0)
     media_max_concurrent_downloads: int = Field(default=2, gt=0)
+    media_proxy_url: SecretStr | None = None
+    media_cookies_file: str = ""
+    local_media_max_bytes: int = Field(default=1_900_000_000, gt=0)
+    local_media_max_duration_seconds: int = Field(default=14_400, gt=0)
     db_path: str = "AI_module/bot_talker_memory.db"
     default_personality: str = (
         "Говори коротко, живо и по-человечески, обычным разговорным русским. "
@@ -37,6 +50,28 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def effective_telegram_api_base_url(self) -> str:
+        if self.telegram_api_mode == "cloud":
+            return ""
+        return self.telegram_api_base_url or "http://telegram-bot-api:8081"
+
+    @property
+    def effective_media_max_bytes(self) -> int:
+        return (
+            self.local_media_max_bytes
+            if self.telegram_api_mode == "local"
+            else self.media_max_bytes
+        )
+
+    @property
+    def effective_media_max_duration_seconds(self) -> int:
+        return (
+            self.local_media_max_duration_seconds
+            if self.telegram_api_mode == "local"
+            else self.media_max_duration_seconds
+        )
 
 
 def load_settings() -> Settings:

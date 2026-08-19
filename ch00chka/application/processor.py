@@ -27,6 +27,7 @@ from ch00chka.domain import (
 )
 
 logger = logging.getLogger(__name__)
+FILTERED_REPLY_TEXT = "Filtered"
 
 
 class EmptyActionPlanner:
@@ -134,14 +135,23 @@ class MessageProcessor:
             review = await self._review(context, response)
 
             if review.verdict is ReviewVerdict.BLOCK:
-                return ProcessingResult(
+                return await self._filtered_result(
                     plan=plan,
-                    participation=decision,
+                    decision=decision,
                     review=review,
                     research=research,
+                    message=message,
                 )
 
             if review.verdict is ReviewVerdict.REVISE:
+                if not response.truncated:
+                    return await self._filtered_result(
+                        plan=plan,
+                        decision=decision,
+                        review=review,
+                        research=research,
+                        message=message,
+                    )
                 revision_instruction = review.revision_instruction or (
                     "Исправь нарушения: " + ", ".join(review.violations)
                 )
@@ -153,11 +163,12 @@ class MessageProcessor:
                 if self._observer_enabled or response.incomplete:
                     review = await self._review(context, response)
                     if review.verdict is not ReviewVerdict.ACCEPT:
-                        return ProcessingResult(
+                        return await self._filtered_result(
                             plan=plan,
-                            participation=decision,
+                            decision=decision,
                             review=review,
                             research=research,
+                            message=message,
                         )
                 else:
                     review = ReviewResult(
@@ -194,3 +205,32 @@ class MessageProcessor:
                 verdict=ReviewVerdict.ACCEPT,
                 violations=("observer_unavailable",),
             )
+
+    async def _filtered_result(
+        self,
+        *,
+        plan: ActionPlan,
+        decision: ParticipationDecision,
+        review: ReviewResult,
+        research: ResearchResult | None,
+        message: NormalizedMessage,
+    ) -> ProcessingResult:
+        filtered_plan = plan.with_action(
+            PlannedAction(
+                type=ActionType.CHAT_REPLY,
+                payload={"text": FILTERED_REPLY_TEXT},
+            )
+        )
+        await self._repository.add_message(
+            chat_id=message.chat_id,
+            role="assistant",
+            user_name=message.bot_name,
+            text=FILTERED_REPLY_TEXT,
+        )
+        return ProcessingResult(
+            plan=filtered_plan,
+            participation=decision,
+            reply_text=FILTERED_REPLY_TEXT,
+            review=review,
+            research=research,
+        )

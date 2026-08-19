@@ -153,7 +153,7 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
         self.assertEqual(result.plan.actions[-1].payload["text"], "Нормально!")
 
-    async def test_observer_can_request_only_one_revision(self):
+    async def test_first_content_revision_is_reported_as_filtered(self):
         repository = FakeRepository()
         actor = ScriptedActor(["Слишком длинный ответ", "Короткий ответ"])
         observer = ScriptedObserver(
@@ -176,16 +176,14 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await processor.process(MESSAGE)
 
-        self.assertEqual(result.reply_text, "Короткий ответ")
-        self.assertEqual(
-            actor.calls,
-            [(None, None), ("Сократи ответ", "Слишком длинный ответ")],
-        )
-        self.assertEqual(observer.calls, 2)
+        self.assertEqual(result.reply_text, "Filtered")
+        self.assertEqual(actor.calls, [(None, None)])
+        self.assertEqual(observer.calls, 1)
+        self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
 
     async def test_second_rejection_blocks_response(self):
         repository = FakeRepository()
-        actor = ScriptedActor(["draft", "still bad"])
+        actor = ScriptedActor([("draft", "length"), "still bad"])
         observer = ScriptedObserver(
             [
                 ReviewResult(ReviewVerdict.REVISE, revision_instruction="fix"),
@@ -202,9 +200,27 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await processor.process(MESSAGE)
 
-        self.assertIsNone(result.reply_text)
-        self.assertEqual([item.role for item in repository.messages], ["user"])
+        self.assertEqual(result.reply_text, "Filtered")
+        self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
         self.assertEqual(len(actor.calls), 2)
+
+    async def test_first_block_is_reported_as_filtered(self):
+        repository = FakeRepository()
+        actor = ScriptedActor(["draft"])
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=ScriptedObserver(
+                [ReviewResult(ReviewVerdict.BLOCK, violations=("unsafe",))]
+            ),
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertEqual(result.reply_text, "Filtered")
+        self.assertEqual(result.plan.actions[-1].payload["text"], "Filtered")
 
     async def test_truncated_response_is_revised_even_when_observer_is_disabled(self):
         repository = FakeRepository()

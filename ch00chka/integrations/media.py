@@ -58,11 +58,15 @@ class YtDlpMediaDownloader:
         max_bytes: int,
         max_duration_seconds: int,
         max_concurrent_downloads: int,
+        proxy_url: str | None = None,
+        cookies_file: str | None = None,
     ) -> None:
         self._temp_dir = Path(temp_dir).resolve()
         self._cache_dir = self._temp_dir / "cache"
         self._max_bytes = max_bytes
         self._max_duration_seconds = max_duration_seconds
+        self._proxy_url = proxy_url
+        self._cookies_file = cookies_file
         self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +104,7 @@ class YtDlpMediaDownloader:
                 return f"{duration_marker}:{duration}"
             return None
 
-        audio_budget = min(5_000_000, self._max_bytes // 4)
+        audio_budget = min(384_000_000, self._max_bytes // 4)
         video_budget = self._max_bytes - audio_budget
         format_selector = (
             f"bestvideo[height<=720][filesize_approx<={video_budget}]"
@@ -132,6 +136,10 @@ class YtDlpMediaDownloader:
             "quiet": True,
             "no_warnings": False,
         }
+        if self._proxy_url:
+            options["proxy"] = self._proxy_url
+        if self._cookies_file:
+            options["cookiefile"] = self._cookies_file
 
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
@@ -141,7 +149,7 @@ class YtDlpMediaDownloader:
                 raise MediaTooLongError(
                     f"Video exceeds {self._max_duration_seconds} seconds"
                 ) from exc
-            raise MediaDownloadError("yt-dlp could not download the media") from exc
+            raise MediaDownloadError(str(exc)) from exc
 
         candidates = [
             path
@@ -181,8 +189,14 @@ class YtDlpMediaDownloader:
 
 
 class YtDlpMediaAdapter:
-    def __init__(self, *, downloader: YtDlpMediaDownloader) -> None:
+    def __init__(
+        self,
+        *,
+        downloader: YtDlpMediaDownloader,
+        upload_chunk_size: int = 1_048_576,
+    ) -> None:
         self._downloader = downloader
+        self._upload_chunk_size = upload_chunk_size
 
     async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None:
         for url in urls:
@@ -192,17 +206,28 @@ class YtDlpMediaAdapter:
 
             try:
                 async with self._downloader.download(url) as media:
-                    await message.reply_video(video=FSInputFile(media.path))
+                    await message.reply_video(
+                        video=FSInputFile(
+                            media.path,
+                            chunk_size=self._upload_chunk_size,
+                        )
+                    )
             except MediaTooLongError:
                 await message.reply("Видео слишком длинное для загрузки.")
             except MediaTooLargeError:
                 await message.reply("Видео получилось слишком большим для Telegram.")
             except MediaDownloadError as exc:
                 logger.warning("Could not download %s media: %s", platform, exc)
-                await message.reply(
-                    "Не получилось скачать это видео без авторизации. "
-                    "Возможно, оно приватное или платформа ограничила доступ."
-                )
+                if platform is MediaPlatform.TIKTOK:
+                    await message.reply(
+                        "TikTok не отдал видео загрузчику. Оно может быть "
+                        "приватным, удалённым или временно защищённым проверкой."
+                    )
+                else:
+                    await message.reply(
+                        "Не получилось скачать это видео без авторизации. "
+                        "Возможно, оно приватное или платформа ограничила доступ."
+                    )
             except Exception:
                 logger.exception("Could not send %s media", platform)
                 await message.reply("Не получилось обработать или отправить видео.")

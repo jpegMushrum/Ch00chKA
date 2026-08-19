@@ -22,15 +22,25 @@ services:
       RESEARCH_MAX_FACTS: ${RESEARCH_MAX_FACTS:-6}
       RESEARCH_WEB_BASE_URL: http://searxng:8080
       TELEGRAM_DROP_PENDING_UPDATES: ${TELEGRAM_DROP_PENDING_UPDATES:-true}
-      BOT_ALIASES: ${BOT_ALIASES:-}
+      TELEGRAM_API_MODE: ${TELEGRAM_API_MODE:-cloud}
+      TELEGRAM_API_BASE_URL: ${TELEGRAM_API_BASE_URL:-}
+      TELEGRAM_API_REQUEST_TIMEOUT_SECONDS: ${TELEGRAM_API_REQUEST_TIMEOUT_SECONDS:-300}
+      TELEGRAM_UPLOAD_CHUNK_SIZE: ${TELEGRAM_UPLOAD_CHUNK_SIZE:-1048576}
       MEDIA_TEMP_DIR: /data/media
       MEDIA_MAX_BYTES: ${MEDIA_MAX_BYTES:-48000000}
       MEDIA_MAX_DURATION_SECONDS: ${MEDIA_MAX_DURATION_SECONDS:-600}
       MEDIA_MAX_CONCURRENT_DOWNLOADS: ${MEDIA_MAX_CONCURRENT_DOWNLOADS:-2}
+      MEDIA_PROXY_URL: ${MEDIA_PROXY_URL:-}
+      MEDIA_COOKIES_FILE: ${MEDIA_COOKIES_FILE:-}
+      LOCAL_MEDIA_MAX_BYTES: ${LOCAL_MEDIA_MAX_BYTES:-1900000000}
+      LOCAL_MEDIA_MAX_DURATION_SECONDS: ${LOCAL_MEDIA_MAX_DURATION_SECONDS:-14400}
       DB_PATH: /data/bot_talker_memory.db
     depends_on:
       searxng:
         condition: service_started
+      telegram-bot-api:
+        condition: service_started
+        required: false
     volumes:
       - bot-data:/data
 
@@ -45,5 +55,18 @@ services:
     volumes:
       - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
+  telegram-bot-api:
+    profiles: ["local"]
+    image: aiogram/telegram-bot-api@sha256:4154d9918c86eaae2643cff857b1091428ebe0923015af8672cd587cb6b8b8e7
+    init: true
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "true"
+    volumes:
+      - telegram-bot-api-data:/var/lib/telegram-bot-api
+
 volumes:
   bot-data:
+  telegram-bot-api-data:
