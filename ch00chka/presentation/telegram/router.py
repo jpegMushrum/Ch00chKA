@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Protocol
 
 from aiogram import Bot, Router, types
-from aiogram.enums import ChatMemberStatus, MessageEntityType
+from aiogram.enums import ChatMemberStatus, MessageEntityType, ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 
 from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_aliases
 from ch00chka.application import MessageProcessor
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import ActionType, NormalizedMessage, ReferencedMessage
+from ch00chka.presentation.telegram.formatting import markdown_to_telegram_html
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +31,48 @@ class NoopMediaAdapter:
 def _extract_urls(message: types.Message) -> tuple[str, ...]:
     text = message.text or message.caption or ""
     entities = message.entities or message.caption_entities or ()
+    forwarded_native_video = _is_forwarded_native_video(message)
     urls: list[str] = []
     for entity in entities:
         if entity.type not in (MessageEntityType.URL, MessageEntityType.TEXT_LINK):
+            continue
+        label = entity.extract_from(text)
+        if (
+            forwarded_native_video
+            and entity.type is MessageEntityType.TEXT_LINK
+            and _is_invisible_text(label)
+        ):
+            logger.info(
+                "Ignoring a hidden link attached to forwarded Telegram video"
+            )
             continue
         url = entity.url or entity.extract_from(text)
         if url:
             urls.append(url)
     return tuple(urls)
+
+
+def _is_invisible_text(value: str) -> bool:
+    """Treat Unicode formatting anchors such as U+200B as invisible."""
+    return not any(unicodedata.category(char)[0] in "LNPS" for char in value)
+
+
+def _is_forwarded_native_video(message: types.Message) -> bool:
+    is_forwarded = bool(
+        getattr(message, "forward_origin", None)
+        or getattr(message, "forward_date", None)
+    )
+    document = getattr(message, "document", None)
+    has_video = bool(
+        getattr(message, "video", None)
+        or getattr(message, "animation", None)
+        or getattr(message, "video_note", None)
+        or (
+            document
+            and str(getattr(document, "mime_type", "") or "").startswith("video/")
+        )
+    )
+    return is_forwarded and has_video
 
 
 async def _is_chat_admin(message: types.Message, bot: Bot) -> bool:
@@ -65,6 +102,18 @@ def _reference_text(message: types.Message, *, limit: int = 2_000) -> str:
     if not text:
         text = "[сообщение без текста]"
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+async def _reply_actor_text(message: types.Message, text: str) -> None:
+    rendered = markdown_to_telegram_html(text)
+    try:
+        await message.reply(rendered, parse_mode=ParseMode.HTML)
+    except TelegramBadRequest:
+        logger.warning(
+            "Telegram rejected formatted actor response for message %s; using plain text",
+            message.message_id,
+        )
+        await message.reply(text)
 
 
 def create_router(
@@ -206,7 +255,7 @@ def create_router(
         try:
             result = await processor.process(normalized)
             if result.reply_text:
-                await message.reply(result.reply_text)
+                await _reply_actor_text(message, result.reply_text)
         except Exception:
             logger.exception("Failed to process message %s", message.message_id)
             if normalized.is_reply_to_bot or normalized.mentions_bot:

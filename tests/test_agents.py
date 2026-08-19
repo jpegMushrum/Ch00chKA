@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from ch00chka.ai.actor import LLMAgentActor
 from ch00chka.ai.observer import LLMAgentObserver
@@ -16,6 +17,7 @@ from ch00chka.domain import (
     ResearchSource,
     ReferencedMessage,
     ReplyReason,
+    ResponseDepth,
     ReviewVerdict,
 )
 
@@ -65,11 +67,44 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.should_reply)
         self.assertEqual(result.reason, ReplyReason.MENTIONED)
+        self.assertEqual(result.response_depth, ResponseDepth.BRIEF)
         self.assertEqual(gateway.calls, [])
+
+    async def test_explicit_search_uses_normal_depth_without_llm(self):
+        gateway = FakeGateway("unused")
+        agent = LLMAgentParticipationDecider(
+            gateway=gateway,
+            model="fake",
+            repository=FakeRepository(),
+        )
+
+        result = await agent.decide(
+            make_message(
+                text="Найди и сравни рельсы в Create",
+                mentions_bot=True,
+            )
+        )
+
+        self.assertEqual(result.response_depth, ResponseDepth.NORMAL)
+        self.assertEqual(gateway.calls, [])
+
+    async def test_explicit_short_request_overrides_search_depth(self):
+        agent = LLMAgentParticipationDecider(
+            gateway=FakeGateway("unused"),
+            model="fake",
+            repository=FakeRepository(),
+        )
+
+        result = await agent.decide(
+            make_message(text="Найди это, но ответь коротко", mentions_bot=True)
+        )
+
+        self.assertEqual(result.response_depth, ResponseDepth.BRIEF)
 
     async def test_ambiguous_message_uses_structured_llm_decision(self):
         gateway = FakeGateway(
-            '{"should_reply": true, "reason": "continuation", "confidence": 0.8}'
+            '{"should_reply": true, "reason": "continuation", '
+            '"response_depth":"detailed", "confidence": 0.8}'
         )
         agent = LLMAgentParticipationDecider(
             gateway=gateway,
@@ -82,6 +117,7 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.should_reply)
         self.assertEqual(result.reason, ReplyReason.CONTINUATION)
         self.assertEqual(result.confidence, 0.8)
+        self.assertEqual(result.response_depth, ResponseDepth.DETAILED)
         self.assertIn("Предыдущее сообщение", gateway.calls[0]["messages"][1]["content"])
         self.assertIn("чучка", gateway.calls[0]["messages"][1]["content"])
         self.assertIn("Ch00chKA", gateway.calls[0]["messages"][1]["content"])
@@ -119,6 +155,16 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
         system_prompt = gateway.calls[0]["messages"][0]["content"]
         self.assertIn("кем работает", system_prompt)
         self.assertIn("search_request", system_prompt)
+
+    async def test_research_prompt_routes_game_mods_to_bilingual_web_search(self):
+        from ch00chka.ai.prompts import RESEARCH_DECISION_SYSTEM_PROMPT
+
+        self.assertIn("игры, моды, аддоны", RESEARCH_DECISION_SYSTEM_PROMPT)
+        self.assertIn("по-английски", RESEARCH_DECISION_SYSTEM_PROMPT)
+        self.assertIn(
+            "Create mod train track types recipes cost",
+            RESEARCH_DECISION_SYSTEM_PROMPT,
+        )
 
     async def test_participation_receives_reply_and_quote_context(self):
         gateway = FakeGateway(
@@ -173,7 +219,28 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Сократи", system_prompt)
         self.assertIn("Не называй себя ботом", system_prompt)
         self.assertIn("Мат, сарказм, подколы", system_prompt)
-        self.assertEqual(gateway.calls[0]["max_tokens"], 320)
+        self.assertIn("Масштаб ответа: normal", system_prompt)
+        self.assertEqual(gateway.calls[0]["max_tokens"], 500)
+
+    async def test_actor_uses_depth_specific_token_budgets(self):
+        for depth, expected in (
+            (ResponseDepth.BRIEF, 111),
+            (ResponseDepth.NORMAL, 444),
+            (ResponseDepth.DETAILED, 888),
+        ):
+            with self.subTest(depth=depth):
+                gateway = FakeGateway("Ответ")
+                actor = LLMAgentActor(
+                    gateway=gateway,
+                    model="fake",
+                    brief_max_tokens=111,
+                    normal_max_tokens=444,
+                    detailed_max_tokens=888,
+                )
+
+                await actor.respond(replace(self.make_context(), response_depth=depth))
+
+                self.assertEqual(gateway.calls[0]["max_tokens"], expected)
 
     async def test_actor_preserves_length_finish_reason(self):
         gateway = FakeGateway("Оборванный ответ", finish_reason="length")
@@ -279,6 +346,8 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.verdict, ReviewVerdict.REVISE)
         self.assertEqual(result.violations, ("too_long",))
+        payload = gateway.calls[0]["messages"][1]["content"]
+        self.assertIn('"response_depth": "normal"', payload)
 
 
 if __name__ == "__main__":

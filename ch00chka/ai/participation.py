@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import re
+
 from ch00chka.ai.json_tools import parse_json_object
 from ch00chka.ai.message_format import format_current_message
 from ch00chka.ai.ports import LLMGateway
 from ch00chka.ai.prompts import PARTICIPATION_SYSTEM_PROMPT
 from ch00chka.application.ports import ConversationRepository
-from ch00chka.domain import NormalizedMessage, ParticipationDecision, ReplyReason
+from ch00chka.domain import (
+    NormalizedMessage,
+    ParticipationDecision,
+    ReplyReason,
+    ResponseDepth,
+)
 
 
 _MODEL_REASONS = {
@@ -15,6 +22,32 @@ _MODEL_REASONS = {
     "search_request": ReplyReason.SEARCH_REQUEST,
     "no_value": ReplyReason.NO_VALUE,
 }
+
+_BRIEF_REQUEST = re.compile(
+    r"\b(коротко|кратко|в двух словах|одним словом|без подробностей|briefly)\b",
+    re.IGNORECASE,
+)
+_DETAILED_REQUEST = re.compile(
+    r"\b(подробно|детально|разв[её]рнуто|пошагово|полный (?:список|разбор)|"
+    r"со всеми подробностями|in detail|step[- ]by[- ]step)\b",
+    re.IGNORECASE,
+)
+_NORMAL_REQUEST = re.compile(
+    r"\b(найди|поищи|проверь|сравни|объясни|перечисли|какие бывают|"
+    r"что известно|кто такой|что такое|как (?:сделать|работает)|почему|"
+    r"find|search|compare|explain|list)\b",
+    re.IGNORECASE,
+)
+
+
+def _direct_response_depth(text: str) -> ResponseDepth:
+    if _BRIEF_REQUEST.search(text):
+        return ResponseDepth.BRIEF
+    if _DETAILED_REQUEST.search(text):
+        return ResponseDepth.DETAILED
+    if _NORMAL_REQUEST.search(text):
+        return ResponseDepth.NORMAL
+    return ResponseDepth.BRIEF
 
 
 class LLMAgentParticipationDecider:
@@ -33,9 +66,17 @@ class LLMAgentParticipationDecider:
 
     async def decide(self, message: NormalizedMessage) -> ParticipationDecision:
         if message.is_reply_to_bot:
-            return ParticipationDecision(True, ReplyReason.REPLY_TO_BOT)
+            return ParticipationDecision(
+                True,
+                ReplyReason.REPLY_TO_BOT,
+                response_depth=_direct_response_depth(message.text),
+            )
         if message.mentions_bot:
-            return ParticipationDecision(True, ReplyReason.MENTIONED)
+            return ParticipationDecision(
+                True,
+                ReplyReason.MENTIONED,
+                response_depth=_direct_response_depth(message.text),
+            )
 
         recent = list(
             await self._repository.recent_messages(
@@ -81,6 +122,19 @@ class LLMAgentParticipationDecider:
         data = parse_json_object(completion.text)
         should_reply = data.get("should_reply") is True
         reason = _MODEL_REASONS.get(str(data.get("reason", "no_value")), ReplyReason.NO_VALUE)
+        try:
+            response_depth = ResponseDepth(str(data.get("response_depth", "")))
+        except ValueError:
+            response_depth = (
+                ResponseDepth.NORMAL
+                if reason is ReplyReason.SEARCH_REQUEST
+                else ResponseDepth.BRIEF
+            )
         confidence = float(data.get("confidence", 0.0))
         confidence = max(0.0, min(confidence, 1.0))
-        return ParticipationDecision(should_reply, reason, confidence)
+        return ParticipationDecision(
+            should_reply,
+            reason,
+            confidence,
+            response_depth=response_depth,
+        )

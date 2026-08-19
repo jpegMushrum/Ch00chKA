@@ -36,6 +36,7 @@ class LLMAgentObserver:
 
         payload = {
             "personality": context.personality,
+            "response_depth": context.response_depth,
             "current_message": current_message_payload(context.current_message),
             "draft_response": response.text,
             "research_performed": context.research_performed,

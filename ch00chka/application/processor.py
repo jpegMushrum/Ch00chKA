@@ -7,6 +7,7 @@ from ch00chka.application.ports import (
     ActionPlanner,
     Actor,
     ContextBuilder,
+    ConversationMemory,
     ConversationRepository,
     Observer,
     ParticipationDecider,
@@ -45,6 +46,11 @@ class NullResearcher:
         )
 
 
+class NullConversationMemory:
+    async def refresh(self, chat_id: int) -> bool:
+        return False
+
+
 class MessageProcessor:
     def __init__(
         self,
@@ -55,6 +61,7 @@ class MessageProcessor:
         actor: Actor,
         observer: Observer,
         researcher: Researcher | None = None,
+        memory: ConversationMemory | None = None,
         action_planner: ActionPlanner | None = None,
         observer_enabled: bool = True,
     ) -> None:
@@ -64,6 +71,7 @@ class MessageProcessor:
         self._actor = actor
         self._observer = observer
         self._researcher = researcher or NullResearcher()
+        self._memory = memory or NullConversationMemory()
         self._action_planner = action_planner or EmptyActionPlanner()
         self._observer_enabled = observer_enabled
 
@@ -87,6 +95,13 @@ class MessageProcessor:
         )
 
         try:
+            await self._memory.refresh(message.chat_id)
+        except Exception:
+            logger.exception(
+                "Conversation summary update failed; continuing with existing memory"
+            )
+
+        try:
             decision = await self._participation.decide(message)
         except Exception:
             logger.exception("Participation agent failed")
@@ -107,6 +122,7 @@ class MessageProcessor:
 
         try:
             context = await self._context_builder.build(message)
+            context = replace(context, response_depth=decision.response_depth)
             if research and research.decision.needs_research:
                 context = replace(
                     context,
@@ -135,6 +151,7 @@ class MessageProcessor:
             review = await self._review(context, response)
 
             if review.verdict is ReviewVerdict.BLOCK:
+                self._log_rejection(message, response, review, research, decision)
                 return await self._filtered_result(
                     plan=plan,
                     decision=decision,
@@ -145,6 +162,7 @@ class MessageProcessor:
 
             if review.verdict is ReviewVerdict.REVISE:
                 if not response.truncated:
+                    self._log_rejection(message, response, review, research, decision)
                     return await self._filtered_result(
                         plan=plan,
                         decision=decision,
@@ -163,6 +181,7 @@ class MessageProcessor:
                 if self._observer_enabled or response.incomplete:
                     review = await self._review(context, response)
                     if review.verdict is not ReviewVerdict.ACCEPT:
+                        self._log_rejection(message, response, review, research, decision)
                         return await self._filtered_result(
                             plan=plan,
                             decision=decision,
@@ -194,6 +213,22 @@ class MessageProcessor:
             reply_text=response.text,
             review=review,
             research=research,
+        )
+
+    @staticmethod
+    def _log_rejection(message, response, review, research, decision) -> None:
+        logger.warning(
+            "Actor response rejected: chat_id=%s message_id=%s verdict=%s "
+            "violations=%s finish_reason=%s response_depth=%s "
+            "research_performed=%s research_facts=%s",
+            message.chat_id,
+            message.message_id,
+            review.verdict,
+            review.violations,
+            response.finish_reason,
+            decision.response_depth,
+            bool(research and research.decision.needs_research),
+            len(research.facts) if research else 0,
         )
 
     async def _review(self, context, response) -> ReviewResult:

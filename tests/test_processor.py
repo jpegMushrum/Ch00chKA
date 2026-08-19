@@ -14,6 +14,7 @@ from ch00chka.domain import (
     ResearchFact,
     ResearchResult,
     ResearchSource,
+    ResponseDepth,
     ReviewResult,
     ReviewVerdict,
 )
@@ -40,13 +41,19 @@ class FakeRepository:
 
 
 class FakeParticipation:
-    def __init__(self, should_reply: bool) -> None:
+    def __init__(
+        self,
+        should_reply: bool,
+        response_depth: ResponseDepth = ResponseDepth.BRIEF,
+    ) -> None:
         self.should_reply = should_reply
+        self.response_depth = response_depth
 
     async def decide(self, message):
         return ParticipationDecision(
             self.should_reply,
             ReplyReason.MENTIONED if self.should_reply else ReplyReason.NO_VALUE,
+            response_depth=self.response_depth,
         )
 
 
@@ -117,7 +124,64 @@ class FakeResearcher:
         )
 
 
+class FakeMemory:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.chat_ids = []
+        self.fail = fail
+
+    async def refresh(self, chat_id):
+        self.chat_ids.append(chat_id)
+        if self.fail:
+            raise RuntimeError("summary unavailable")
+        return True
+
+
 class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_selected_response_depth_reaches_actor_context(self):
+        actor = ScriptedActor(["Подробный ответ"])
+        processor = MessageProcessor(
+            repository=FakeRepository(),
+            participation=FakeParticipation(True, ResponseDepth.DETAILED),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=ScriptedObserver([ReviewResult(ReviewVerdict.ACCEPT)]),
+        )
+
+        await processor.process(MESSAGE)
+
+        self.assertEqual(actor.contexts[0].response_depth, ResponseDepth.DETAILED)
+
+    async def test_refreshes_memory_after_storing_user_message(self):
+        repository = FakeRepository()
+        memory = FakeMemory()
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(False),
+            context_builder=FakeContextBuilder(),
+            actor=ScriptedActor(["unused"]),
+            observer=ScriptedObserver([]),
+            memory=memory,
+        )
+
+        await processor.process(MESSAGE)
+
+        self.assertEqual(memory.chat_ids, [MESSAGE.chat_id])
+        self.assertEqual(repository.messages[0].text, MESSAGE.text)
+
+    async def test_summary_failure_does_not_break_message_processing(self):
+        processor = MessageProcessor(
+            repository=FakeRepository(),
+            participation=FakeParticipation(False),
+            context_builder=FakeContextBuilder(),
+            actor=ScriptedActor(["unused"]),
+            observer=ScriptedObserver([]),
+            memory=FakeMemory(fail=True),
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertFalse(result.participation.should_reply)
+
     async def test_no_reply_stores_user_message_without_calling_actor(self):
         repository = FakeRepository()
         actor = ScriptedActor(["unused"])
@@ -174,12 +238,16 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
             observer=observer,
         )
 
-        result = await processor.process(MESSAGE)
+        with self.assertLogs("ch00chka.application.processor", level="WARNING") as logs:
+            result = await processor.process(MESSAGE)
 
         self.assertEqual(result.reply_text, "Filtered")
         self.assertEqual(actor.calls, [(None, None)])
         self.assertEqual(observer.calls, 1)
         self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
+        self.assertIn("verdict=revise", logs.output[0])
+        self.assertIn("violations=('too_long',)", logs.output[0])
+        self.assertNotIn(MESSAGE.text, logs.output[0])
 
     async def test_second_rejection_blocks_response(self):
         repository = FakeRepository()

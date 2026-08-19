@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 import aiosqlite
 
-from ch00chka.domain import ChatMessage
+from ch00chka.domain import ChatMessage, SummarizableMessage, SummaryBatch
 
 
 class SQLiteConversationRepository:
@@ -47,6 +47,7 @@ class SQLiteConversationRepository:
                 CREATE TABLE IF NOT EXISTS chat_meta (
                     chat_id INTEGER PRIMARY KEY,
                     summary TEXT DEFAULT '',
+                    summary_message_id INTEGER NOT NULL DEFAULT 0,
                     personality TEXT DEFAULT '',
                     aliases TEXT DEFAULT '[]',
                     last_message_time REAL
@@ -58,6 +59,11 @@ class SQLiteConversationRepository:
             if "aliases" not in columns:
                 await db.execute(
                     "ALTER TABLE chat_meta ADD COLUMN aliases TEXT DEFAULT '[]'"
+                )
+            if "summary_message_id" not in columns:
+                await db.execute(
+                    "ALTER TABLE chat_meta ADD COLUMN "
+                    "summary_message_id INTEGER NOT NULL DEFAULT 0"
                 )
             await db.execute(
                 """
@@ -161,6 +167,77 @@ class SQLiteConversationRepository:
             ) as cursor:
                 row = await cursor.fetchone()
         return str(row[0]) if row and row[0] else ""
+
+    async def get_summary_batch(
+        self,
+        *,
+        chat_id: int,
+        keep_recent: int,
+        min_batch_size: int,
+        max_batch_size: int,
+    ) -> SummaryBatch | None:
+        async with self._connection() as db:
+            async with db.execute(
+                """
+                SELECT summary, summary_message_id
+                FROM chat_meta
+                WHERE chat_id = ?
+                """,
+                (chat_id,),
+            ) as cursor:
+                meta = await cursor.fetchone()
+
+            current_summary = str(meta[0]) if meta and meta[0] else ""
+            summary_message_id = int(meta[1]) if meta and meta[1] else 0
+            async with db.execute(
+                """
+                SELECT id, role, user_name, text
+                FROM chat_history
+                WHERE chat_id = ? AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (chat_id, summary_message_id, max_batch_size + keep_recent),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        eligible_count = min(max_batch_size, max(0, len(rows) - keep_recent))
+        if eligible_count < min_batch_size:
+            return None
+        messages = tuple(
+            SummarizableMessage(
+                id=int(message_id),
+                role=str(role),
+                user_name=str(user_name),
+                text=str(text),
+            )
+            for message_id, role, user_name, text in rows[:eligible_count]
+            if text
+        )
+        if not messages:
+            return None
+        return SummaryBatch(current_summary=current_summary, messages=messages)
+
+    async def save_summary(
+        self,
+        *,
+        chat_id: int,
+        summary: str,
+        through_message_id: int,
+    ) -> None:
+        async with self._connection() as db:
+            await db.execute(
+                """
+                INSERT INTO chat_meta (chat_id, summary, summary_message_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    summary = excluded.summary,
+                    summary_message_id = excluded.summary_message_id
+                WHERE chat_meta.summary_message_id < excluded.summary_message_id
+                """,
+                (chat_id, summary, through_message_id),
+            )
+            await db.commit()
 
     async def get_personality(self, chat_id: int) -> str:
         async with self._connection() as db:

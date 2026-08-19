@@ -11,6 +11,7 @@ from ch00chka.domain import (
     ParticipationDecision,
     ReviewResult,
     ResearchResult,
+    SummaryBatch,
 )
 
 
@@ -35,6 +36,23 @@ class ConversationRepository(Protocol):
 
     async def get_summary(self, chat_id: int) -> str: ...
 
+    async def get_summary_batch(
+        self,
+        *,
+        chat_id: int,
+        keep_recent: int,
+        min_batch_size: int,
+        max_batch_size: int,
+    ) -> SummaryBatch | None: ...
+
+    async def save_summary(
+        self,
+        *,
+        chat_id: int,
+        summary: str,
+        through_message_id: int,
+    ) -> None: ...
+
     async def get_personality(self, chat_id: int) -> str: ...
 
     async def set_personality(self, chat_id: int, personality: str) -> None: ...
@@ -54,6 +72,10 @@ class Researcher(Protocol):
 
 class ContextBuilder(Protocol):
     async def build(self, message: NormalizedMessage) -> ConversationContext: ...
+
+
+class ConversationMemory(Protocol):
+    async def refresh(self, chat_id: int) -> bool: ...
 
 
 class Actor(Protocol):

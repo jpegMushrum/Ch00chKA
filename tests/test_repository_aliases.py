@@ -44,6 +44,54 @@ class RepositoryAliasTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await repository.get_aliases(1), ("чучка", "чуч"))
             self.assertEqual(await repository.get_personality(1), "Резкая")
 
+            async with aiosqlite.connect(db_path) as db:
+                async with db.execute("PRAGMA table_info(chat_meta)") as cursor:
+                    columns = {str(row[1]) for row in await cursor.fetchall()}
+            self.assertIn("summary_message_id", columns)
+
+    async def test_summary_batch_keeps_recent_messages_and_advances_cursor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteConversationRepository(
+                db_path=str(Path(directory) / "memory.db"),
+                default_personality="По умолчанию",
+            )
+            await repository.initialize()
+            for number in range(1, 13):
+                await repository.add_message(
+                    chat_id=7,
+                    role="user",
+                    user_name="Alice",
+                    text=f"Сообщение {number}",
+                )
+
+            batch = await repository.get_summary_batch(
+                chat_id=7,
+                keep_recent=5,
+                min_batch_size=3,
+                max_batch_size=4,
+            )
+
+            self.assertIsNotNone(batch)
+            self.assertEqual(
+                [message.text for message in batch.messages],
+                [f"Сообщение {number}" for number in range(1, 5)],
+            )
+            await repository.save_summary(
+                chat_id=7,
+                summary="Alice написала первые четыре сообщения.",
+                through_message_id=batch.through_message_id,
+            )
+
+            next_batch = await repository.get_summary_batch(
+                chat_id=7,
+                keep_recent=5,
+                min_batch_size=3,
+                max_batch_size=4,
+            )
+            self.assertIsNotNone(next_batch)
+            self.assertEqual(next_batch.current_summary, "Alice написала первые четыре сообщения.")
+            self.assertEqual(next_batch.messages[0].text, "Сообщение 5")
+
 
 if __name__ == "__main__":
     unittest.main()

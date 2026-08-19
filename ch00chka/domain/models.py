@@ -36,6 +36,12 @@ class ResearchSource(StrEnum):
     WEB = "web"
 
 
+class ResponseDepth(StrEnum):
+    BRIEF = "brief"
+    NORMAL = "normal"
+    DETAILED = "detailed"
+
+
 @dataclass(frozen=True, slots=True)
 class ReferencedMessage:
     message_id: int
@@ -70,10 +76,29 @@ class ChatMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class SummarizableMessage:
+    id: int
+    role: str
+    user_name: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class SummaryBatch:
+    current_summary: str
+    messages: tuple[SummarizableMessage, ...]
+
+    @property
+    def through_message_id(self) -> int:
+        return self.messages[-1].id
+
+
+@dataclass(frozen=True, slots=True)
 class ParticipationDecision:
     should_reply: bool
     reason: ReplyReason
     confidence: float = 1.0
+    response_depth: ResponseDepth = ResponseDepth.BRIEF
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +108,7 @@ class ConversationContext:
     recent_messages: tuple[ChatMessage, ...]
     current_message: NormalizedMessage
     prompt_version: str
+    response_depth: ResponseDepth = ResponseDepth.NORMAL
     research_facts: tuple["ResearchFact", ...] = ()
     research_performed: bool = False
 

@@ -12,6 +12,7 @@ from ch00chka.ai.gateway import DeepSeekGateway
 from ch00chka.ai.observer import LLMAgentObserver
 from ch00chka.ai.participation import LLMAgentParticipationDecider
 from ch00chka.ai.research import LLMAgentResearcher
+from ch00chka.ai.summary import LLMAgentConversationMemory
 from ch00chka.application import MessageProcessor
 from ch00chka.application.planners import UrlActionPlanner
 from ch00chka.infrastructure import SQLiteConversationRepository
@@ -69,8 +70,25 @@ def build_application(settings: Settings) -> Application:
         repository=repository,
         recent_messages_limit=settings.ai_recent_messages_limit,
     )
-    actor = LLMAgentActor(gateway=gateway, model=settings.ai_model)
+    actor = LLMAgentActor(
+        gateway=gateway,
+        model=settings.ai_model,
+        brief_max_tokens=settings.ai_brief_max_tokens,
+        normal_max_tokens=settings.ai_normal_max_tokens,
+        detailed_max_tokens=settings.ai_detailed_max_tokens,
+    )
     observer = LLMAgentObserver(gateway=gateway, model=settings.ai_observer_model)
+    memory = None
+    if settings.ai_summary_enabled:
+        memory = LLMAgentConversationMemory(
+            gateway=gateway,
+            model=settings.ai_summary_model,
+            repository=repository,
+            keep_recent=settings.ai_recent_messages_limit,
+            min_batch_size=settings.ai_summary_batch_size,
+            max_batch_size=settings.ai_summary_max_batch_messages,
+            max_chars=settings.ai_summary_max_chars,
+        )
     researcher = None
     if settings.ai_research_enabled:
         researcher = LLMAgentResearcher(
@@ -91,6 +109,7 @@ def build_application(settings: Settings) -> Application:
         actor=actor,
         observer=observer,
         researcher=researcher,
+        memory=memory,
         action_planner=UrlActionPlanner(),
         observer_enabled=settings.ai_observer_enabled,
     )

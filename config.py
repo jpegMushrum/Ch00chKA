@@ -12,9 +12,17 @@ class Settings(BaseSettings):
     ai_participation_model: str = "deepseek-v4-flash"
     ai_research_model: str = "deepseek-v4-flash"
     ai_observer_model: str = "deepseek-v4-flash"
+    ai_summary_model: str = "deepseek-v4-flash"
     ai_thinking_enabled: bool = False
     ai_observer_enabled: bool = True
     ai_recent_messages_limit: int = 30
+    ai_summary_enabled: bool = True
+    ai_summary_batch_size: int = Field(default=8, gt=0, le=100)
+    ai_summary_max_batch_messages: int = Field(default=60, gt=0, le=200)
+    ai_summary_max_chars: int = Field(default=3000, ge=500, le=10000)
+    ai_brief_max_tokens: int = Field(default=160, ge=64, le=500)
+    ai_normal_max_tokens: int = Field(default=500, ge=128, le=1200)
+    ai_detailed_max_tokens: int = Field(default=1000, ge=256, le=2000)
     ai_research_enabled: bool = True
     research_cache_ttl_seconds: int = Field(default=21_600, gt=0)
     research_timeout_seconds: float = Field(default=8.0, gt=0)
