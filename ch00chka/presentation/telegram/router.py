@@ -100,6 +100,52 @@ def _participant_mention_chunks(
     return tuple(chunks)
 
 
+def _participant_from_add_command(message: types.Message) -> ChatParticipant | None:
+    replied_user = (
+        message.reply_to_message.from_user
+        if message.reply_to_message
+        else None
+    )
+    if replied_user and not replied_user.is_bot:
+        return ChatParticipant(
+            user_id=replied_user.id,
+            display_name=replied_user.full_name,
+            username=replied_user.username,
+        )
+
+    text = message.text or ""
+    for entity in message.entities or ():
+        if entity.type != MessageEntityType.TEXT_MENTION:
+            continue
+        mentioned_user = entity.user
+        if mentioned_user and not mentioned_user.is_bot:
+            return ChatParticipant(
+                user_id=mentioned_user.id,
+                display_name=mentioned_user.full_name,
+                username=mentioned_user.username,
+            )
+
+    payload = text.partition(" ")[2].strip()
+    match = re.fullmatch(r"(\d+)(?:\s+(.+))?", payload, re.DOTALL)
+    if not match:
+        return None
+    user_id = int(match.group(1))
+    if user_id <= 0:
+        return None
+    supplied_name = (match.group(2) or "").strip()
+    display_name = supplied_name or f"User {user_id}"
+    username = (
+        display_name[1:]
+        if re.fullmatch(r"@[A-Za-z0-9_]{5,32}", display_name)
+        else None
+    )
+    return ChatParticipant(
+        user_id=user_id,
+        display_name=display_name,
+        username=username,
+    )
+
+
 def _message_author(message: types.Message) -> str:
     if message.from_user:
         return message.from_user.full_name
@@ -150,6 +196,7 @@ def create_router(
             "/get_personality — показать текущую личность.\n"
             "/generate_aliases чучка, чуч — задать обращения и создать производные.\n"
             "/get_aliases — показать обращения этого чата.\n"
+            "/add_mention — добавить участника в /all (только администратор).\n"
             "/all — позвать замеченных участников чата (только администратор)."
         )
 
@@ -236,6 +283,43 @@ def create_router(
             return
         for chunk in chunks:
             await message.reply(chunk, parse_mode=ParseMode.HTML)
+
+    @router.message(Command("add_mention"))
+    async def add_mention_command(message: types.Message, bot: Bot) -> None:
+        if message.chat.type not in ("group", "supergroup") or not message.from_user:
+            return
+        if admin_id is not None:
+            if message.from_user.id != admin_id:
+                await message.reply(
+                    "Команда /add_mention доступна только администратору бота."
+                )
+                return
+        elif not await _is_chat_admin(message, bot):
+            await message.reply(
+                "Команда /add_mention доступна только администраторам чата."
+            )
+            return
+
+        participant = _participant_from_add_command(message)
+        if participant is None:
+            await message.reply(
+                "Ответь командой /add_mention на сообщение человека, выбери его "
+                "кликабельным упоминанием или напиши: /add_mention 123456789 Имя. "
+                "Обычного @username недостаточно — Telegram не сообщает по нему ID."
+            )
+            return
+
+        await repository.upsert_participant(
+            chat_id=message.chat.id,
+            user_id=participant.user_id,
+            display_name=participant.display_name,
+            username=participant.username,
+        )
+        mention = _participant_mention_chunks((participant,))[0].removeprefix("📣 ")
+        await message.reply(
+            f"Добавила {mention} в /all этого чата.",
+            parse_mode=ParseMode.HTML,
+        )
 
     @router.message()
     async def process_group_message(message: types.Message, bot: Bot) -> None:

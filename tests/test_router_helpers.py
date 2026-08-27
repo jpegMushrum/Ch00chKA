@@ -10,6 +10,7 @@ try:
     from ch00chka.presentation.telegram.router import (
         _extract_urls,
         _parse_alias_seeds,
+        _participant_from_add_command,
         _participant_mention_chunks,
     )
 except ModuleNotFoundError:
@@ -17,6 +18,7 @@ except ModuleNotFoundError:
     MessageEntityType = None
     _extract_urls = None
     _parse_alias_seeds = None
+    _participant_from_add_command = None
     _participant_mention_chunks = None
 
 
@@ -55,6 +57,73 @@ class RouterHelperTests(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(len(chunk) <= 65 for chunk in chunks))
         self.assertEqual(sum(chunk.count("tg://user?id=") for chunk in chunks), 4)
+
+    def test_add_participant_can_use_reply(self):
+        target = SimpleNamespace(
+            id=77,
+            full_name="Reply User",
+            username="reply_user",
+            is_bot=False,
+        )
+        message = SimpleNamespace(
+            reply_to_message=SimpleNamespace(from_user=target),
+            text="/add_mention",
+            entities=(),
+        )
+
+        participant = _participant_from_add_command(message)
+
+        self.assertEqual(
+            participant,
+            ChatParticipant(77, "Reply User", "reply_user"),
+        )
+
+    def test_add_participant_can_use_explicit_id_and_name(self):
+        message = SimpleNamespace(
+            reply_to_message=None,
+            text="/add_mention 123456789 Alice Example",
+            entities=(),
+        )
+
+        participant = _participant_from_add_command(message)
+
+        self.assertEqual(
+            participant,
+            ChatParticipant(123456789, "Alice Example", None),
+        )
+
+    def test_add_participant_can_use_telegram_text_mention(self):
+        target = SimpleNamespace(
+            id=88,
+            full_name="Mentioned User",
+            username=None,
+            is_bot=False,
+        )
+        entity = SimpleNamespace(
+            type=MessageEntityType.TEXT_MENTION,
+            user=target,
+        )
+        message = SimpleNamespace(
+            reply_to_message=None,
+            text="/add_mention Mentioned User",
+            entities=(entity,),
+        )
+
+        participant = _participant_from_add_command(message)
+
+        self.assertEqual(
+            participant,
+            ChatParticipant(88, "Mentioned User", None),
+        )
+
+    def test_plain_username_is_not_accepted_without_user_id(self):
+        message = SimpleNamespace(
+            reply_to_message=None,
+            text="/add_mention @alice",
+            entities=(),
+        )
+
+        self.assertIsNone(_participant_from_add_command(message))
 
     def _message(self, *, label, forwarded=True, video=True, photo=False):
         entity = SimpleNamespace(
