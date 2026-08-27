@@ -7,6 +7,8 @@ from typing import Any
 
 from aiogram import BaseMiddleware, types
 
+from ch00chka.application.ports import ConversationRepository
+
 
 logger = logging.getLogger(__name__)
 _START_COMMAND = re.compile(r"^/start(?:@[A-Za-z0-9_]+)?(?:\s|$)", re.IGNORECASE)
@@ -55,4 +57,31 @@ class AdminStartGate(BaseMiddleware):
 
         if chat_id not in self._active_chats:
             return None
+        return await handler(event, data)
+
+
+class ParticipantTrackingMiddleware(BaseMiddleware):
+    def __init__(self, repository: ConversationRepository) -> None:
+        self._repository = repository
+
+    async def __call__(
+        self,
+        handler: Callable[[types.Message, dict[str, Any]], Awaitable[Any]],
+        event: types.Message,
+        data: dict[str, Any],
+    ) -> Any:
+        user = event.from_user
+        if event.chat.type in ("group", "supergroup") and user and not user.is_bot:
+            try:
+                await self._repository.upsert_participant(
+                    chat_id=event.chat.id,
+                    user_id=user.id,
+                    display_name=user.full_name,
+                    username=user.username,
+                )
+            except Exception:
+                logger.exception(
+                    "Could not update participant registry for chat %s",
+                    event.chat.id,
+                )
         return await handler(event, data)

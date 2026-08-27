@@ -6,6 +6,7 @@ from ch00chka.domain import (
     ActionPlan,
     ActorResponse,
     ChatMessage,
+    ChatParticipant,
     ConversationContext,
     NormalizedMessage,
     ParticipationDecision,
@@ -60,6 +61,17 @@ class ConversationRepository(Protocol):
     async def get_aliases(self, chat_id: int) -> tuple[str, ...]: ...
 
     async def set_aliases(self, chat_id: int, aliases: Sequence[str]) -> None: ...
+
+    async def upsert_participant(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        display_name: str,
+        username: str | None,
+    ) -> None: ...
+
+    async def list_participants(self, chat_id: int) -> Sequence[ChatParticipant]: ...
 
 
 class ParticipationDecider(Protocol):

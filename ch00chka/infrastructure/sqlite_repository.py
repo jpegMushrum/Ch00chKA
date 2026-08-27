@@ -8,7 +8,12 @@ from contextlib import asynccontextmanager
 
 import aiosqlite
 
-from ch00chka.domain import ChatMessage, SummarizableMessage, SummaryBatch
+from ch00chka.domain import (
+    ChatMessage,
+    ChatParticipant,
+    SummarizableMessage,
+    SummaryBatch,
+)
 
 
 class SQLiteConversationRepository:
@@ -54,6 +59,18 @@ class SQLiteConversationRepository:
                 )
                 """
             )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_participants (
+                    chat_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    display_name TEXT NOT NULL,
+                    username TEXT,
+                    last_seen REAL NOT NULL,
+                    PRIMARY KEY (chat_id, user_id)
+                )
+                """
+            )
             async with db.execute("PRAGMA table_info(chat_meta)") as cursor:
                 columns = {str(row[1]) for row in await cursor.fetchall()}
             if "aliases" not in columns:
@@ -71,7 +88,66 @@ class SQLiteConversationRepository:
                 ON chat_history(chat_id, id)
                 """
             )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_chat_participants_chat_last_seen
+                ON chat_participants(chat_id, last_seen DESC)
+                """
+            )
             await db.commit()
+
+    async def upsert_participant(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        display_name: str,
+        username: str | None,
+    ) -> None:
+        normalized_name = display_name.strip() or f"User {user_id}"
+        normalized_username = username.strip() if username else None
+        async with self._connection() as db:
+            await db.execute(
+                """
+                INSERT INTO chat_participants (
+                    chat_id, user_id, display_name, username, last_seen
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    username = excluded.username,
+                    last_seen = excluded.last_seen
+                """,
+                (
+                    chat_id,
+                    user_id,
+                    normalized_name,
+                    normalized_username,
+                    time.time(),
+                ),
+            )
+            await db.commit()
+
+    async def list_participants(self, chat_id: int) -> Sequence[ChatParticipant]:
+        async with self._connection() as db:
+            async with db.execute(
+                """
+                SELECT user_id, display_name, username
+                FROM chat_participants
+                WHERE chat_id = ?
+                ORDER BY last_seen DESC, user_id ASC
+                """,
+                (chat_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return tuple(
+            ChatParticipant(
+                user_id=int(user_id),
+                display_name=str(display_name),
+                username=str(username) if username else None,
+            )
+            for user_id, display_name, username in rows
+        )
 
     async def get_aliases(self, chat_id: int) -> tuple[str, ...]:
         async with self._connection() as db:

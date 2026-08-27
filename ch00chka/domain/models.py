@@ -76,6 +76,13 @@ class ChatMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class ChatParticipant:
+    user_id: int
+    display_name: str
+    username: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SummarizableMessage:
     id: int
     role: str

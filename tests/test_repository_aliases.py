@@ -15,6 +15,42 @@ except ModuleNotFoundError:
 
 @unittest.skipIf(aiosqlite is None, "aiosqlite is not installed in this test runtime")
 class RepositoryAliasTests(unittest.IsolatedAsyncioTestCase):
+    async def test_participants_are_updated_and_isolated_by_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteConversationRepository(
+                db_path=str(Path(directory) / "memory.db"),
+                default_personality="По умолчанию",
+            )
+            await repository.initialize()
+            await repository.upsert_participant(
+                chat_id=100,
+                user_id=1,
+                display_name="Alice",
+                username="alice",
+            )
+            await repository.upsert_participant(
+                chat_id=200,
+                user_id=2,
+                display_name="Bob",
+                username="bob",
+            )
+            await repository.upsert_participant(
+                chat_id=100,
+                user_id=1,
+                display_name="Alice Updated",
+                username=None,
+            )
+
+            chat_100 = await repository.list_participants(100)
+            chat_200 = await repository.list_participants(200)
+
+            self.assertEqual(len(chat_100), 1)
+            self.assertEqual(chat_100[0].user_id, 1)
+            self.assertEqual(chat_100[0].display_name, "Alice Updated")
+            self.assertIsNone(chat_100[0].username)
+            self.assertEqual(len(chat_200), 1)
+            self.assertEqual(chat_200[0].user_id, 2)
+
     async def test_existing_chat_meta_table_is_migrated(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = str(Path(directory) / "memory.db")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import re
 import unicodedata
@@ -13,8 +14,16 @@ from aiogram.filters import Command
 from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_aliases
 from ch00chka.application import MessageProcessor
 from ch00chka.application.ports import ConversationRepository
-from ch00chka.domain import ActionType, NormalizedMessage, ReferencedMessage
-from ch00chka.presentation.telegram.access import AdminStartGate
+from ch00chka.domain import (
+    ActionType,
+    ChatParticipant,
+    NormalizedMessage,
+    ReferencedMessage,
+)
+from ch00chka.presentation.telegram.access import (
+    AdminStartGate,
+    ParticipantTrackingMiddleware,
+)
 from ch00chka.presentation.telegram.formatting import markdown_to_telegram_html
 
 logger = logging.getLogger(__name__)
@@ -70,6 +79,27 @@ def _parse_alias_seeds(text: str) -> tuple[str, ...]:
     return sanitize_aliases(re.split(r"[,;\n]+", payload))
 
 
+def _participant_mention_chunks(
+    participants: tuple[ChatParticipant, ...],
+    *,
+    max_length: int = 3_500,
+) -> tuple[str, ...]:
+    chunks: list[str] = []
+    current = "📣 "
+    for participant in participants:
+        label = html.escape(participant.display_name[:80], quote=False)
+        mention = f'<a href="tg://user?id={participant.user_id}">{label}</a>'
+        candidate = current + (" " if current != "📣 " else "") + mention
+        if len(candidate) > max_length and current != "📣 ":
+            chunks.append(current)
+            current = "📣 " + mention
+        else:
+            current = candidate
+    if current != "📣 ":
+        chunks.append(current)
+    return tuple(chunks)
+
+
 def _message_author(message: types.Message) -> str:
     if message.from_user:
         return message.from_user.full_name
@@ -108,6 +138,7 @@ def create_router(
 ) -> Router:
     router = Router(name="group_messages")
     router.message.outer_middleware(AdminStartGate(admin_id))
+    router.message.middleware(ParticipantTrackingMiddleware(repository))
     media_adapter = media or NoopMediaAdapter()
     bot_identity: types.User | None = None
 
@@ -118,7 +149,8 @@ def create_router(
             "/set_personality [текст] — настроить личность (только администратор).\n"
             "/get_personality — показать текущую личность.\n"
             "/generate_aliases чучка, чуч — задать обращения и создать производные.\n"
-            "/get_aliases — показать обращения этого чата."
+            "/get_aliases — показать обращения этого чата.\n"
+            "/all — позвать замеченных участников чата (только администратор)."
         )
 
     @router.message(Command("set_personality"))
@@ -184,6 +216,26 @@ def create_router(
         await message.reply(
             "Обращения этого чата: " + (", ".join(aliases) if aliases else "не заданы")
         )
+
+    @router.message(Command("all"))
+    async def mention_all_command(message: types.Message, bot: Bot) -> None:
+        if message.chat.type not in ("group", "supergroup") or not message.from_user:
+            return
+        if admin_id is not None:
+            if message.from_user.id != admin_id:
+                await message.reply("Команда /all доступна только администратору бота.")
+                return
+        elif not await _is_chat_admin(message, bot):
+            await message.reply("Команда /all доступна только администраторам чата.")
+            return
+
+        participants = tuple(await repository.list_participants(message.chat.id))
+        chunks = _participant_mention_chunks(participants)
+        if not chunks:
+            await message.reply("Пока некого звать: я ещё не видела участников чата.")
+            return
+        for chunk in chunks:
+            await message.reply(chunk, parse_mode=ParseMode.HTML)
 
     @router.message()
     async def process_group_message(message: types.Message, bot: Bot) -> None:

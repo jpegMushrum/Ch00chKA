@@ -3,13 +3,30 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from ch00chka.presentation.telegram.access import AdminStartGate, is_start_command
+from ch00chka.presentation.telegram.access import (
+    AdminStartGate,
+    ParticipantTrackingMiddleware,
+    is_start_command,
+)
 
 
 class FakeMessage:
-    def __init__(self, *, user_id: int, text: str, chat_id: int = 100) -> None:
-        self.from_user = SimpleNamespace(id=user_id)
-        self.chat = SimpleNamespace(id=chat_id)
+    def __init__(
+        self,
+        *,
+        user_id: int,
+        text: str,
+        chat_id: int = 100,
+        chat_type: str = "group",
+        is_bot: bool = False,
+    ) -> None:
+        self.from_user = SimpleNamespace(
+            id=user_id,
+            full_name=f"User {user_id}",
+            username=f"user{user_id}",
+            is_bot=is_bot,
+        )
+        self.chat = SimpleNamespace(id=chat_id, type=chat_type)
         self.text = text
         self.caption = None
         self.replies: list[str] = []
@@ -92,6 +109,57 @@ class AdminStartGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_start_command("/start@TestBot payload"))
         self.assertFalse(is_start_command("/starter"))
         self.assertFalse(is_start_command("текст /start"))
+
+
+class FakeParticipantRepository:
+    def __init__(self) -> None:
+        self.upserts: list[dict[str, object]] = []
+
+    async def upsert_participant(self, **participant) -> None:
+        self.upserts.append(participant)
+
+
+class ParticipantTrackingMiddlewareTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.repository = FakeParticipantRepository()
+        self.middleware = ParticipantTrackingMiddleware(self.repository)
+        self.handled: list[FakeMessage] = []
+
+    async def _handler(self, event, data):
+        self.handled.append(event)
+        return "handled"
+
+    async def test_group_participant_is_registered_for_current_chat(self):
+        message = FakeMessage(user_id=13, text="Привет", chat_id=200)
+
+        result = await self.middleware(self._handler, message, {})
+
+        self.assertEqual(result, "handled")
+        self.assertEqual(
+            self.repository.upserts,
+            [
+                {
+                    "chat_id": 200,
+                    "user_id": 13,
+                    "display_name": "User 13",
+                    "username": "user13",
+                }
+            ],
+        )
+
+    async def test_private_chat_and_bots_are_not_registered(self):
+        private_message = FakeMessage(
+            user_id=13,
+            text="Привет",
+            chat_type="private",
+        )
+        bot_message = FakeMessage(user_id=14, text="Привет", is_bot=True)
+
+        await self.middleware(self._handler, private_message, {})
+        await self.middleware(self._handler, bot_message, {})
+
+        self.assertEqual(self.repository.upserts, [])
+        self.assertEqual(self.handled, [private_message, bot_message])
 
 
 if __name__ == "__main__":
