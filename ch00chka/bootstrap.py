@@ -135,6 +135,7 @@ def build_application(settings: Settings) -> Application:
             downloader=media_downloader,
             upload_chunk_size=settings.telegram_upload_chunk_size,
         ),
+        admin_id=settings.telegram_admin_id or None,
     )
     return Application(
         router=router,

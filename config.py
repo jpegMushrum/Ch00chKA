@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     research_max_facts: int = Field(default=6, gt=0, le=12)
     research_web_base_url: str | None = None
     telegram_drop_pending_updates: bool = True
+    telegram_admin_id: int = Field(default=0, ge=0)
     telegram_api_mode: Literal["cloud", "local"] = "cloud"
     telegram_api_base_url: str = ""
     telegram_api_request_timeout_seconds: int = Field(default=300, gt=0)

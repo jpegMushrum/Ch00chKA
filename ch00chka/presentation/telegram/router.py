@@ -14,6 +14,7 @@ from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_al
 from ch00chka.application import MessageProcessor
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import ActionType, NormalizedMessage, ReferencedMessage
+from ch00chka.presentation.telegram.access import AdminStartGate
 from ch00chka.presentation.telegram.formatting import markdown_to_telegram_html
 
 logger = logging.getLogger(__name__)
@@ -103,8 +104,10 @@ def create_router(
     alias_registry: BotAliasRegistry,
     alias_generator: LLMAliasGenerator,
     media: MediaAdapter | None = None,
+    admin_id: int | None = None,
 ) -> Router:
     router = Router(name="group_messages")
+    router.message.outer_middleware(AdminStartGate(admin_id))
     media_adapter = media or NoopMediaAdapter()
     bot_identity: types.User | None = None
 
