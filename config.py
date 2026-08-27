@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     ai_summary_enabled: bool = True
     ai_summary_batch_size: int = Field(default=8, gt=0, le=100)
     ai_summary_max_batch_messages: int = Field(default=60, gt=0, le=200)
-    ai_summary_max_chars: int = Field(default=3000, ge=500, le=10000)
+    ai_summary_max_chars: int = Field(default=2000, ge=500, le=10000)
+    ai_summary_retry_cooldown_seconds: int = Field(default=900, ge=60, le=86_400)
     ai_brief_max_tokens: int = Field(default=160, ge=64, le=500)
     ai_normal_max_tokens: int = Field(default=500, ge=128, le=1200)
     ai_detailed_max_tokens: int = Field(default=1000, ge=256, le=2000)

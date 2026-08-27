@@ -31,19 +31,17 @@ class NoopMediaAdapter:
 def _extract_urls(message: types.Message) -> tuple[str, ...]:
     text = message.text or message.caption or ""
     entities = message.entities or message.caption_entities or ()
-    forwarded_native_video = _is_forwarded_native_video(message)
     urls: list[str] = []
     for entity in entities:
         if entity.type not in (MessageEntityType.URL, MessageEntityType.TEXT_LINK):
             continue
         label = entity.extract_from(text)
         if (
-            forwarded_native_video
-            and entity.type is MessageEntityType.TEXT_LINK
+            entity.type == MessageEntityType.TEXT_LINK
             and _is_invisible_text(label)
         ):
             logger.info(
-                "Ignoring a hidden link attached to forwarded Telegram video"
+                "Ignoring a link attached only to invisible Telegram text"
             )
             continue
         url = entity.url or entity.extract_from(text)
@@ -55,24 +53,6 @@ def _extract_urls(message: types.Message) -> tuple[str, ...]:
 def _is_invisible_text(value: str) -> bool:
     """Treat Unicode formatting anchors such as U+200B as invisible."""
     return not any(unicodedata.category(char)[0] in "LNPS" for char in value)
-
-
-def _is_forwarded_native_video(message: types.Message) -> bool:
-    is_forwarded = bool(
-        getattr(message, "forward_origin", None)
-        or getattr(message, "forward_date", None)
-    )
-    document = getattr(message, "document", None)
-    has_video = bool(
-        getattr(message, "video", None)
-        or getattr(message, "animation", None)
-        or getattr(message, "video_note", None)
-        or (
-            document
-            and str(getattr(document, "mime_type", "") or "").startswith("video/")
-        )
-    )
-    return is_forwarded and has_video
 
 
 async def _is_chat_admin(message: types.Message, bot: Bot) -> bool:

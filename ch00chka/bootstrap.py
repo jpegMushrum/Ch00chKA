@@ -88,6 +88,7 @@ def build_application(settings: Settings) -> Application:
             min_batch_size=settings.ai_summary_batch_size,
             max_batch_size=settings.ai_summary_max_batch_messages,
             max_chars=settings.ai_summary_max_chars,
+            retry_cooldown_seconds=settings.ai_summary_retry_cooldown_seconds,
         )
     researcher = None
     if settings.ai_research_enabled:

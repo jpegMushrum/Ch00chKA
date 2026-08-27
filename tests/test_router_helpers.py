@@ -24,7 +24,7 @@ class RouterHelperTests(unittest.TestCase):
     def test_empty_alias_command_is_rejected(self):
         self.assertEqual(_parse_alias_seeds("/generate_aliases"), ())
 
-    def _message(self, *, label, forwarded=True, video=True):
+    def _message(self, *, label, forwarded=True, video=True, photo=False):
         entity = SimpleNamespace(
             type=MessageEntityType.TEXT_LINK,
             url="https://www.instagram.com/p/example/",
@@ -37,10 +37,14 @@ class RouterHelperTests(unittest.TestCase):
             caption_entities=(entity,),
             forward_origin=object() if forwarded else None,
             forward_date=None,
+            photo=(object(),) if photo else None,
             video=object() if video else None,
             animation=None,
             video_note=None,
             document=None,
+            audio=None,
+            voice=None,
+            sticker=None,
         )
 
     def test_hidden_link_on_forwarded_video_is_ignored(self):
@@ -56,13 +60,15 @@ class RouterHelperTests(unittest.TestCase):
             ("https://www.instagram.com/p/example/",),
         )
 
-    def test_hidden_link_without_forwarded_video_is_preserved(self):
+    def test_hidden_link_on_forwarded_photo_is_ignored(self):
+        message = self._message(label="\u200b\u200b", video=False, photo=True)
+
+        self.assertEqual(_extract_urls(message), ())
+
+    def test_hidden_link_is_ignored_even_without_forward_metadata(self):
         message = self._message(label="\u200b", forwarded=False)
 
-        self.assertEqual(
-            _extract_urls(message),
-            ("https://www.instagram.com/p/example/",),
-        )
+        self.assertEqual(_extract_urls(message), ())
 
 
 if __name__ == "__main__":

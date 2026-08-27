@@ -30,7 +30,14 @@ class FakeRepository:
         self.saved.append(kwargs)
 
 
-def make_memory(gateway, repository, *, max_chars=3000):
+def make_memory(
+    gateway,
+    repository,
+    *,
+    max_chars=2000,
+    retry_cooldown_seconds=900,
+    clock=lambda: 100.0,
+):
     return LLMAgentConversationMemory(
         gateway=gateway,
         model="fake-summary",
@@ -39,6 +46,8 @@ def make_memory(gateway, repository, *, max_chars=3000):
         min_batch_size=8,
         max_batch_size=60,
         max_chars=max_chars,
+        retry_cooldown_seconds=retry_cooldown_seconds,
+        clock=clock,
     )
 
 
@@ -61,8 +70,12 @@ class SummaryAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repository.saved[0]["through_message_id"], 11)
         self.assertIn("Alice любит", gateway.calls[0]["messages"][1]["content"])
         self.assertIn('"author": "Bob"', gateway.calls[0]["messages"][1]["content"])
+        self.assertIn(
+            '"max_summary_characters": 2000',
+            gateway.calls[0]["messages"][1]["content"],
+        )
         self.assertEqual(gateway.calls[0]["temperature"], 0.2)
-        self.assertEqual(gateway.calls[0]["max_tokens"], 1200)
+        self.assertEqual(gateway.calls[0]["max_tokens"], 2000)
 
     async def test_does_not_call_model_without_eligible_batch(self):
         repository = FakeRepository(None)
@@ -87,3 +100,38 @@ class SummaryAgentTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(updated)
         self.assertEqual(repository.saved, [])
+
+    async def test_incomplete_summary_is_not_retried_during_cooldown(self):
+        repository = FakeRepository(
+            SummaryBatch(
+                current_summary="",
+                messages=(SummarizableMessage(5, "user", "Bob", "Факт"),),
+            )
+        )
+        gateway = FakeGateway("Оборвано", "length")
+        memory = make_memory(gateway, repository)
+
+        first = await memory.refresh(42)
+        second = await memory.refresh(42)
+
+        self.assertFalse(first)
+        self.assertFalse(second)
+        self.assertEqual(len(gateway.calls), 1)
+        self.assertEqual(repository.saved, [])
+
+    async def test_retry_is_allowed_after_cooldown(self):
+        now = [100.0]
+        repository = FakeRepository(
+            SummaryBatch(
+                current_summary="",
+                messages=(SummarizableMessage(5, "user", "Bob", "Факт"),),
+            )
+        )
+        gateway = FakeGateway("Оборвано", "length")
+        memory = make_memory(gateway, repository, clock=lambda: now[0])
+
+        await memory.refresh(42)
+        now[0] += 901
+        await memory.refresh(42)
+
+        self.assertEqual(len(gateway.calls), 2)
