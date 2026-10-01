@@ -30,6 +30,17 @@ class ActionType(StrEnum):
     COMMAND = "command"
 
 
+class ChatFeature(StrEnum):
+    AI_RESPONSES = "ai_responses"
+    MEMORY = "memory"
+    RESEARCH = "research"
+    OBSERVER = "observer"
+    YOUTUBE = "youtube"
+    TIKTOK = "tiktok"
+    INSTAGRAM = "instagram"
+    MENTIONS = "mentions"
+
+
 class ResearchSource(StrEnum):
     MUSIC = "music"
     ENCYCLOPEDIA = "encyclopedia"
@@ -190,3 +201,11 @@ class ProcessingResult:
     reply_text: str | None = None
     review: ReviewResult | None = None
     research: ResearchResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingOptions:
+    responses_enabled: bool = True
+    memory_enabled: bool = True
+    research_enabled: bool = True
+    observer_enabled: bool = True

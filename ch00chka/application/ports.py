@@ -73,6 +73,16 @@ class ConversationRepository(Protocol):
 
     async def list_participants(self, chat_id: int) -> Sequence[ChatParticipant]: ...
 
+    async def get_feature_overrides(self, chat_id: int) -> dict[str, bool]: ...
+
+    async def toggle_feature(
+        self,
+        *,
+        chat_id: int,
+        feature: str,
+        default_enabled: bool,
+    ) -> bool: ...
+
 
 class ParticipationDecider(Protocol):
     async def decide(self, message: NormalizedMessage) -> ParticipationDecision: ...

@@ -9,6 +9,7 @@ from ch00chka.domain import (
     ConversationContext,
     NormalizedMessage,
     ParticipationDecision,
+    ProcessingOptions,
     ReplyReason,
     ResearchDecision,
     ResearchFact,
@@ -48,8 +49,10 @@ class FakeParticipation:
     ) -> None:
         self.should_reply = should_reply
         self.response_depth = response_depth
+        self.calls = 0
 
     async def decide(self, message):
+        self.calls += 1
         return ParticipationDecision(
             self.should_reply,
             ReplyReason.MENTIONED if self.should_reply else ReplyReason.NO_VALUE,
@@ -105,7 +108,11 @@ class ScriptedObserver:
 
 
 class FakeResearcher:
+    def __init__(self):
+        self.calls = 0
+
     async def research(self, message):
+        self.calls += 1
         return ResearchResult(
             decision=ResearchDecision(
                 needs_research=True,
@@ -137,6 +144,70 @@ class FakeMemory:
 
 
 class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_research_does_not_call_researcher(self):
+        researcher = FakeResearcher()
+        actor = ScriptedActor(["Ответ без поиска"])
+        processor = MessageProcessor(
+            repository=FakeRepository(),
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=ScriptedObserver([ReviewResult(ReviewVerdict.ACCEPT)]),
+            researcher=researcher,
+        )
+
+        result = await processor.process(
+            MESSAGE,
+            options=ProcessingOptions(research_enabled=False),
+        )
+
+        self.assertEqual(researcher.calls, 0)
+        self.assertIsNone(result.research)
+        self.assertFalse(actor.contexts[0].research_performed)
+
+    async def test_disabled_responses_skip_ai_without_storing_message(self):
+        repository = FakeRepository()
+        participation = FakeParticipation(True)
+        processor = MessageProcessor(
+            repository=repository,
+            participation=participation,
+            context_builder=FakeContextBuilder(),
+            actor=ScriptedActor(["unused"]),
+            observer=ScriptedObserver([]),
+        )
+
+        result = await processor.process(
+            MESSAGE,
+            options=ProcessingOptions(
+                responses_enabled=False,
+                memory_enabled=False,
+            ),
+        )
+
+        self.assertEqual(result.participation.reason, ReplyReason.DISABLED)
+        self.assertEqual(repository.messages, [])
+        self.assertEqual(participation.calls, 0)
+
+    async def test_disabled_memory_does_not_store_messages_or_refresh_summary(self):
+        repository = FakeRepository()
+        memory = FakeMemory()
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(False),
+            context_builder=FakeContextBuilder(),
+            actor=ScriptedActor(["unused"]),
+            observer=ScriptedObserver([]),
+            memory=memory,
+        )
+
+        await processor.process(
+            MESSAGE,
+            options=ProcessingOptions(memory_enabled=False),
+        )
+
+        self.assertEqual(repository.messages, [])
+        self.assertEqual(memory.chat_ids, [])
+
     async def test_selected_response_depth_reaches_actor_context(self):
         actor = ScriptedActor(["Подробный ответ"])
         processor = MessageProcessor(

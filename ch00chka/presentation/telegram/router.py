@@ -6,20 +6,23 @@ import re
 import unicodedata
 from typing import Protocol
 
-from aiogram import Bot, Router, types
+from aiogram import Bot, F, Router, types
 from aiogram.enums import ChatMemberStatus, MessageEntityType, ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_aliases
-from ch00chka.application import MessageProcessor
+from ch00chka.application import ChatFeatureService, MessageProcessor
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import (
     ActionType,
+    ChatFeature,
     ChatParticipant,
     NormalizedMessage,
     ReferencedMessage,
 )
+from ch00chka.integrations.media_urls import MediaPlatform, detect_media_platform
 from ch00chka.presentation.telegram.access import (
     AdminStartGate,
     ParticipantTrackingMiddleware,
@@ -27,6 +30,23 @@ from ch00chka.presentation.telegram.access import (
 from ch00chka.presentation.telegram.formatting import markdown_to_telegram_html
 
 logger = logging.getLogger(__name__)
+
+_FEATURE_CALLBACK_PREFIX = "feature:"
+_FEATURE_LABELS: tuple[tuple[ChatFeature, str], ...] = (
+    (ChatFeature.AI_RESPONSES, "Ответы ИИ"),
+    (ChatFeature.MEMORY, "Запоминание сообщений"),
+    (ChatFeature.RESEARCH, "Поиск в интернете"),
+    (ChatFeature.OBSERVER, "Проверка ответов"),
+    (ChatFeature.YOUTUBE, "YouTube"),
+    (ChatFeature.TIKTOK, "TikTok"),
+    (ChatFeature.INSTAGRAM, "Instagram"),
+    (ChatFeature.MENTIONS, "/all"),
+)
+_MEDIA_FEATURES = {
+    MediaPlatform.YOUTUBE: ChatFeature.YOUTUBE,
+    MediaPlatform.TIKTOK: ChatFeature.TIKTOK,
+    MediaPlatform.INSTAGRAM: ChatFeature.INSTAGRAM,
+}
 
 
 class MediaAdapter(Protocol):
@@ -36,6 +56,18 @@ class MediaAdapter(Protocol):
 class NoopMediaAdapter:
     async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None:
         return None
+
+
+def _features_keyboard(states: dict[ChatFeature, bool]):
+    builder = InlineKeyboardBuilder()
+    for feature, label in _FEATURE_LABELS:
+        enabled = states[feature]
+        builder.button(
+            text=f"{label}: {'ON' if enabled else 'OFF'}",
+            callback_data=f"{_FEATURE_CALLBACK_PREFIX}{feature.value}",
+        )
+    builder.adjust(2)
+    return builder.as_markup()
 
 
 def _extract_urls(message: types.Message) -> tuple[str, ...]:
@@ -179,11 +211,13 @@ def create_router(
     repository: ConversationRepository,
     alias_registry: BotAliasRegistry,
     alias_generator: LLMAliasGenerator,
+    feature_service: ChatFeatureService,
     media: MediaAdapter | None = None,
     admin_id: int | None = None,
 ) -> Router:
     router = Router(name="group_messages")
-    router.message.outer_middleware(AdminStartGate(admin_id))
+    start_gate = AdminStartGate(admin_id)
+    router.message.outer_middleware(start_gate)
     router.message.middleware(ParticipantTrackingMiddleware(repository))
     media_adapter = media or NoopMediaAdapter()
     bot_identity: types.User | None = None
@@ -196,9 +230,52 @@ def create_router(
             "/get_personality — показать текущую личность.\n"
             "/generate_aliases чучка, чуч — задать обращения и создать производные.\n"
             "/get_aliases — показать обращения этого чата.\n"
+            "/features — включить или выключить функции чата.\n"
             "/add_mention — добавить участника в /all (только администратор).\n"
             "/all — позвать замеченных участников чата (только администратор)."
         )
+
+    @router.message(Command("features"))
+    async def features_command(message: types.Message) -> None:
+        if message.chat.type not in ("group", "supergroup"):
+            return
+        states = await feature_service.states(message.chat.id)
+        await message.reply(
+            "Функции этого чата. Переключать может любой участник:",
+            reply_markup=_features_keyboard(states),
+        )
+
+    @router.callback_query(F.data.startswith(_FEATURE_CALLBACK_PREFIX))
+    async def feature_callback(callback: types.CallbackQuery) -> None:
+        message = callback.message
+        if not message or message.chat.type not in ("group", "supergroup"):
+            await callback.answer("Настройки доступны только в групповом чате.")
+            return
+        if not start_gate.is_active(message.chat.id):
+            await callback.answer(
+                "Сначала администратор должен активировать чат через /start.",
+                show_alert=True,
+            )
+            return
+
+        value = (callback.data or "").removeprefix(_FEATURE_CALLBACK_PREFIX)
+        try:
+            feature = ChatFeature(value)
+        except ValueError:
+            await callback.answer("Неизвестная функция.", show_alert=True)
+            return
+
+        enabled = await feature_service.toggle(message.chat.id, feature)
+        states = await feature_service.states(message.chat.id)
+        try:
+            await message.edit_reply_markup(reply_markup=_features_keyboard(states))
+        except TelegramBadRequest:
+            logger.debug(
+                "Feature panel was already refreshed for chat %s",
+                message.chat.id,
+            )
+        label = dict(_FEATURE_LABELS)[feature]
+        await callback.answer(f"{label}: {'ON' if enabled else 'OFF'}")
 
     @router.message(Command("set_personality"))
     async def set_personality_command(message: types.Message, bot: Bot) -> None:
@@ -268,6 +345,10 @@ def create_router(
     async def mention_all_command(message: types.Message, bot: Bot) -> None:
         if message.chat.type not in ("group", "supergroup") or not message.from_user:
             return
+        states = await feature_service.states(message.chat.id)
+        if not states[ChatFeature.MENTIONS]:
+            await message.reply("Функция /all сейчас выключена в /features.")
+            return
         if admin_id is not None:
             if message.from_user.id != admin_id:
                 await message.reply("Команда /all доступна только администратору бота.")
@@ -328,6 +409,7 @@ def create_router(
             return
 
         text = message.text or message.caption or ""
+        feature_states = await feature_service.states(message.chat.id)
         if bot_identity is None:
             bot_identity = await bot.get_me()
         bot_user = bot_identity
@@ -372,7 +454,10 @@ def create_router(
 
         result = None
         try:
-            result = await processor.process(normalized)
+            result = await processor.process(
+                normalized,
+                options=feature_service.processing_options(feature_states),
+            )
             if result.reply_text:
                 await _reply_actor_text(message, result.reply_text)
         except Exception:
@@ -383,7 +468,13 @@ def create_router(
         media_urls = tuple(
             str(action.payload["url"])
             for action in (result.plan.actions if result else ())
-            if action.type is ActionType.MEDIA_DOWNLOAD and action.payload.get("url")
+            if action.type is ActionType.MEDIA_DOWNLOAD
+            and action.payload.get("url")
+            and (
+                (platform := detect_media_platform(str(action.payload["url"])))
+                is not None
+            )
+            and feature_states[_MEDIA_FEATURES[platform]]
         )
         if media_urls:
             try:

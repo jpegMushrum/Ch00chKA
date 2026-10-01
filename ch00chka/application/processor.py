@@ -19,6 +19,7 @@ from ch00chka.domain import (
     NormalizedMessage,
     ParticipationDecision,
     PlannedAction,
+    ProcessingOptions,
     ProcessingResult,
     ReplyReason,
     ReviewResult,
@@ -75,7 +76,13 @@ class MessageProcessor:
         self._action_planner = action_planner or EmptyActionPlanner()
         self._observer_enabled = observer_enabled
 
-    async def process(self, message: NormalizedMessage) -> ProcessingResult:
+    async def process(
+        self,
+        message: NormalizedMessage,
+        *,
+        options: ProcessingOptions | None = None,
+    ) -> ProcessingResult:
+        options = options or ProcessingOptions()
         plan = await self._action_planner.plan(message)
 
         if not message.text.strip():
@@ -87,18 +94,27 @@ class MessageProcessor:
                 ),
             )
 
-        await self._repository.add_message(
-            chat_id=message.chat_id,
-            role="user",
-            user_name=message.user_name,
-            text=message.text,
-        )
+        if options.memory_enabled:
+            await self._repository.add_message(
+                chat_id=message.chat_id,
+                role="user",
+                user_name=message.user_name,
+                text=message.text,
+            )
+            try:
+                await self._memory.refresh(message.chat_id)
+            except Exception:
+                logger.exception(
+                    "Conversation summary update failed; continuing with existing memory"
+                )
 
-        try:
-            await self._memory.refresh(message.chat_id)
-        except Exception:
-            logger.exception(
-                "Conversation summary update failed; continuing with existing memory"
+        if not options.responses_enabled:
+            return ProcessingResult(
+                plan=plan,
+                participation=ParticipationDecision(
+                    should_reply=False,
+                    reason=ReplyReason.DISABLED,
+                ),
             )
 
         try:
@@ -115,10 +131,11 @@ class MessageProcessor:
             return ProcessingResult(plan=plan, participation=decision)
 
         research: ResearchResult | None = None
-        try:
-            research = await self._researcher.research(message)
-        except Exception:
-            logger.exception("Research pipeline failed; continuing without external facts")
+        if options.research_enabled:
+            try:
+                research = await self._researcher.research(message)
+            except Exception:
+                logger.exception("Research pipeline failed; continuing without external facts")
 
         try:
             context = await self._context_builder.build(message)
@@ -147,7 +164,8 @@ class MessageProcessor:
             )
         review: ReviewResult | None = None
 
-        if self._observer_enabled or response.incomplete:
+        observer_enabled = self._observer_enabled and options.observer_enabled
+        if observer_enabled or response.incomplete:
             review = await self._review(context, response)
 
             if review.verdict is ReviewVerdict.BLOCK:
@@ -158,6 +176,7 @@ class MessageProcessor:
                     review=review,
                     research=research,
                     message=message,
+                    memory_enabled=options.memory_enabled,
                 )
 
             if review.verdict is ReviewVerdict.REVISE:
@@ -169,6 +188,7 @@ class MessageProcessor:
                         review=review,
                         research=research,
                         message=message,
+                        memory_enabled=options.memory_enabled,
                     )
                 revision_instruction = review.revision_instruction or (
                     "Исправь нарушения: " + ", ".join(review.violations)
@@ -178,7 +198,7 @@ class MessageProcessor:
                     revision_instruction=revision_instruction,
                     previous_response=response.text,
                 )
-                if self._observer_enabled or response.incomplete:
+                if observer_enabled or response.incomplete:
                     review = await self._review(context, response)
                     if review.verdict is not ReviewVerdict.ACCEPT:
                         self._log_rejection(message, response, review, research, decision)
@@ -188,6 +208,7 @@ class MessageProcessor:
                             review=review,
                             research=research,
                             message=message,
+                            memory_enabled=options.memory_enabled,
                         )
                 else:
                     review = ReviewResult(
@@ -201,12 +222,13 @@ class MessageProcessor:
                 payload={"text": response.text},
             )
         )
-        await self._repository.add_message(
-            chat_id=message.chat_id,
-            role="assistant",
-            user_name=message.bot_name,
-            text=response.text,
-        )
+        if options.memory_enabled:
+            await self._repository.add_message(
+                chat_id=message.chat_id,
+                role="assistant",
+                user_name=message.bot_name,
+                text=response.text,
+            )
         return ProcessingResult(
             plan=plan,
             participation=decision,
@@ -249,6 +271,7 @@ class MessageProcessor:
         review: ReviewResult,
         research: ResearchResult | None,
         message: NormalizedMessage,
+        memory_enabled: bool,
     ) -> ProcessingResult:
         filtered_plan = plan.with_action(
             PlannedAction(
@@ -256,12 +279,13 @@ class MessageProcessor:
                 payload={"text": FILTERED_REPLY_TEXT},
             )
         )
-        await self._repository.add_message(
-            chat_id=message.chat_id,
-            role="assistant",
-            user_name=message.bot_name,
-            text=FILTERED_REPLY_TEXT,
-        )
+        if memory_enabled:
+            await self._repository.add_message(
+                chat_id=message.chat_id,
+                role="assistant",
+                user_name=message.bot_name,
+                text=FILTERED_REPLY_TEXT,
+            )
         return ProcessingResult(
             plan=filtered_plan,
             participation=decision,

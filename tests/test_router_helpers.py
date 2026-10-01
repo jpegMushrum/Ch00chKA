@@ -6,17 +6,20 @@ from types import SimpleNamespace
 try:
     from aiogram.enums import MessageEntityType
 
-    from ch00chka.domain import ChatParticipant
+    from ch00chka.domain import ChatFeature, ChatParticipant
     from ch00chka.presentation.telegram.router import (
         _extract_urls,
+        _features_keyboard,
         _parse_alias_seeds,
         _participant_from_add_command,
         _participant_mention_chunks,
     )
 except ModuleNotFoundError:
+    ChatFeature = None
     ChatParticipant = None
     MessageEntityType = None
     _extract_urls = None
+    _features_keyboard = None
     _parse_alias_seeds = None
     _participant_from_add_command = None
     _participant_mention_chunks = None
@@ -24,6 +27,18 @@ except ModuleNotFoundError:
 
 @unittest.skipIf(_parse_alias_seeds is None, "aiogram is not installed in this test runtime")
 class RouterHelperTests(unittest.TestCase):
+    def test_features_keyboard_reflects_current_states(self):
+        states = {feature: True for feature in ChatFeature}
+        states[ChatFeature.RESEARCH] = False
+
+        markup = _features_keyboard(states)
+        buttons = [button for row in markup.inline_keyboard for button in row]
+        by_callback = {button.callback_data: button.text for button in buttons}
+
+        self.assertEqual(len(buttons), len(ChatFeature))
+        self.assertEqual(by_callback["feature:ai_responses"], "Ответы ИИ: ON")
+        self.assertEqual(by_callback["feature:research"], "Поиск в интернете: OFF")
+
     def test_alias_seeds_are_parsed_from_command(self):
         self.assertEqual(
             _parse_alias_seeds("/generate_aliases Чучка, чуч; choochka"),

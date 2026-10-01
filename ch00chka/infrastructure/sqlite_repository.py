@@ -71,6 +71,17 @@ class SQLiteConversationRepository:
                 )
                 """
             )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_features (
+                    chat_id INTEGER NOT NULL,
+                    feature TEXT NOT NULL,
+                    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (chat_id, feature)
+                )
+                """
+            )
             async with db.execute("PRAGMA table_info(chat_meta)") as cursor:
                 columns = {str(row[1]) for row in await cursor.fetchall()}
             if "aliases" not in columns:
@@ -95,6 +106,52 @@ class SQLiteConversationRepository:
                 """
             )
             await db.commit()
+
+    async def get_feature_overrides(self, chat_id: int) -> dict[str, bool]:
+        async with self._connection() as db:
+            async with db.execute(
+                """
+                SELECT feature, enabled
+                FROM chat_features
+                WHERE chat_id = ?
+                """,
+                (chat_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return {str(feature): bool(enabled) for feature, enabled in rows}
+
+    async def toggle_feature(
+        self,
+        *,
+        chat_id: int,
+        feature: str,
+        default_enabled: bool,
+    ) -> bool:
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(
+                """
+                SELECT enabled
+                FROM chat_features
+                WHERE chat_id = ? AND feature = ?
+                """,
+                (chat_id, feature),
+            ) as cursor:
+                row = await cursor.fetchone()
+            current = bool(row[0]) if row else default_enabled
+            enabled = not current
+            await db.execute(
+                """
+                INSERT INTO chat_features (chat_id, feature, enabled, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_id, feature) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
+                """,
+                (chat_id, feature, int(enabled), time.time()),
+            )
+            await db.commit()
+        return enabled
 
     async def upsert_participant(
         self,

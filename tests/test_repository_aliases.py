@@ -15,6 +15,34 @@ except ModuleNotFoundError:
 
 @unittest.skipIf(aiosqlite is None, "aiosqlite is not installed in this test runtime")
 class RepositoryAliasTests(unittest.IsolatedAsyncioTestCase):
+    async def test_feature_toggles_are_persisted_and_isolated_by_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteConversationRepository(
+                db_path=str(Path(directory) / "memory.db"),
+                default_personality="По умолчанию",
+            )
+            await repository.initialize()
+
+            enabled = await repository.toggle_feature(
+                chat_id=100,
+                feature="research",
+                default_enabled=True,
+            )
+
+            self.assertFalse(enabled)
+            self.assertEqual(
+                await repository.get_feature_overrides(100),
+                {"research": False},
+            )
+            self.assertEqual(await repository.get_feature_overrides(200), {})
+
+            enabled = await repository.toggle_feature(
+                chat_id=100,
+                feature="research",
+                default_enabled=True,
+            )
+            self.assertTrue(enabled)
+
     async def test_participants_are_updated_and_isolated_by_chat(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteConversationRepository(

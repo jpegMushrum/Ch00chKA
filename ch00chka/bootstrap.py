@@ -13,8 +13,9 @@ from ch00chka.ai.observer import LLMAgentObserver
 from ch00chka.ai.participation import LLMAgentParticipationDecider
 from ch00chka.ai.research import LLMAgentResearcher
 from ch00chka.ai.summary import LLMAgentConversationMemory
-from ch00chka.application import MessageProcessor
+from ch00chka.application import ChatFeatureService, MessageProcessor
 from ch00chka.application.planners import UrlActionPlanner
+from ch00chka.domain import ChatFeature
 from ch00chka.infrastructure import SQLiteConversationRepository
 from ch00chka.integrations.media import YtDlpMediaAdapter, YtDlpMediaDownloader
 from ch00chka.integrations.research_sources import PublicResearchBackend
@@ -90,19 +91,17 @@ def build_application(settings: Settings) -> Application:
             max_chars=settings.ai_summary_max_chars,
             retry_cooldown_seconds=settings.ai_summary_retry_cooldown_seconds,
         )
-    researcher = None
-    if settings.ai_research_enabled:
-        researcher = LLMAgentResearcher(
-            gateway=gateway,
-            model=settings.ai_research_model,
-            repository=repository,
-            backend=PublicResearchBackend(
-                timeout_seconds=settings.research_timeout_seconds,
-                web_base_url=settings.research_web_base_url,
-            ),
-            cache_ttl_seconds=settings.research_cache_ttl_seconds,
-            max_facts=settings.research_max_facts,
-        )
+    researcher = LLMAgentResearcher(
+        gateway=gateway,
+        model=settings.ai_research_model,
+        repository=repository,
+        backend=PublicResearchBackend(
+            timeout_seconds=settings.research_timeout_seconds,
+            web_base_url=settings.research_web_base_url,
+        ),
+        cache_ttl_seconds=settings.research_cache_ttl_seconds,
+        max_facts=settings.research_max_facts,
+    )
     processor = MessageProcessor(
         repository=repository,
         participation=participation,
@@ -112,7 +111,20 @@ def build_application(settings: Settings) -> Application:
         researcher=researcher,
         memory=memory,
         action_planner=UrlActionPlanner(),
-        observer_enabled=settings.ai_observer_enabled,
+        observer_enabled=True,
+    )
+    feature_service = ChatFeatureService(
+        repository=repository,
+        defaults={
+            ChatFeature.AI_RESPONSES: True,
+            ChatFeature.MEMORY: True,
+            ChatFeature.RESEARCH: settings.ai_research_enabled,
+            ChatFeature.OBSERVER: settings.ai_observer_enabled,
+            ChatFeature.YOUTUBE: True,
+            ChatFeature.TIKTOK: True,
+            ChatFeature.INSTAGRAM: True,
+            ChatFeature.MENTIONS: True,
+        },
     )
     media_downloader = YtDlpMediaDownloader(
         temp_dir=settings.media_temp_dir,
@@ -131,6 +143,7 @@ def build_application(settings: Settings) -> Application:
         repository=repository,
         alias_registry=alias_registry,
         alias_generator=alias_generator,
+        feature_service=feature_service,
         media=YtDlpMediaAdapter(
             downloader=media_downloader,
             upload_chunk_size=settings.telegram_upload_chunk_size,
