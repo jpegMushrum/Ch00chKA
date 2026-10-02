@@ -13,6 +13,7 @@ from ch00chka.integrations.media import (
     MediaKind,
     YtDlpMediaAdapter,
     YtDlpMediaDownloader,
+    _safe_gallery_dl_output,
 )
 from ch00chka.integrations.media_urls import MediaPlatform
 
@@ -50,6 +51,31 @@ class FailingYoutubeDL:
 
 
 class MediaDownloaderTests(unittest.TestCase):
+    def test_gallery_dl_diagnostics_redact_session_data(self):
+        diagnostic = _safe_gallery_dl_output(
+            "Cookie: sessionid=top-secret\n"
+            "csrftoken=also-secret\n"
+            "ERROR: login required"
+        )
+
+        self.assertNotIn("top-secret", diagnostic)
+        self.assertNotIn("also-secret", diagnostic)
+        self.assertIn("ERROR: login required", diagnostic)
+
+    def test_media_candidates_include_gallery_subdirectories_not_temporary_cookies(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            work_dir = Path(temp_dir)
+            media_dir = work_dir / "instagram" / "author"
+            media_dir.mkdir(parents=True)
+            (media_dir / "media_001.jpg").write_bytes(b"image")
+            cookie_dir = work_dir / ".cookies"
+            cookie_dir.mkdir()
+            (cookie_dir / "cookies.txt").write_text("secret", encoding="utf-8")
+
+            candidates = YtDlpMediaDownloader._media_candidates(work_dir)
+
+        self.assertEqual([path.name for path in candidates], ["media_001.jpg"])
+
     def test_tiktok_relies_on_extractors_automatic_impersonation(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             downloader = YtDlpMediaDownloader(
@@ -102,15 +128,17 @@ class MediaDownloaderTests(unittest.TestCase):
 
     def test_uses_the_cookie_file_matching_the_media_platform(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            source_cookie = Path(temp_dir) / "youtube-cookies.txt"
+            source_cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
             downloader = YtDlpMediaDownloader(
                 temp_dir=temp_dir,
                 max_bytes=48_000_000,
                 max_duration_seconds=600,
                 max_concurrent_downloads=1,
-                cookies_file="/run/secrets/ch00chka/fallback-cookies.txt",
+                cookies_file=str(Path(temp_dir) / "fallback-cookies.txt"),
                 cookies_files={
-                    MediaPlatform.YOUTUBE: "/run/secrets/ch00chka/youtube-cookies.txt",
-                    MediaPlatform.TIKTOK: "/run/secrets/ch00chka/tiktok-cookies.txt",
+                    MediaPlatform.YOUTUBE: str(source_cookie),
+                    MediaPlatform.TIKTOK: str(Path(temp_dir) / "tiktok-cookies.txt"),
                 },
             )
             work_dir = Path(temp_dir) / "work"
@@ -125,16 +153,18 @@ class MediaDownloaderTests(unittest.TestCase):
                     MediaPlatform.YOUTUBE,
                     work_dir,
                 )
+            copied_cookie = Path(FakeYoutubeDL.last_options["cookiefile"])
+            copied_cookie_contents = copied_cookie.read_text(encoding="utf-8")
 
-        self.assertEqual(
-            FakeYoutubeDL.last_options["cookiefile"],
-            "/run/secrets/ch00chka/youtube-cookies.txt",
-        )
+        self.assertNotEqual(copied_cookie, source_cookie)
+        self.assertEqual(copied_cookie_contents, "# Netscape HTTP Cookie File\n")
 
     def test_falls_back_to_gallery_dl_for_tiktok_photo_posts(self):
         def gallery_dl_run(command, **kwargs):
             destination = Path(command[command.index("--destination") + 1])
-            (destination / "media_001.jpg").write_bytes(b"image")
+            output_dir = destination / "tiktok" / "user"
+            output_dir.mkdir(parents=True)
+            (output_dir / "media_001.jpg").write_bytes(b"image")
             return type("Result", (), {"returncode": 0})()
 
         with tempfile.TemporaryDirectory() as temp_dir:

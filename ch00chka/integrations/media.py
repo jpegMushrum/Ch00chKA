@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,14 @@ class DownloadedMedia:
 _PHOTO_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _VIDEO_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".webm"})
 _MAX_MEDIA_GROUP_ITEMS = 10
+_GALLERY_DL_LOG_LIMIT = 4_000
+_SENSITIVE_HEADER = re.compile(
+    r"(?im)^(?:cookie|set-cookie|authorization|proxy-authorization)\s*:\s*.*$"
+)
+_SENSITIVE_VALUE = re.compile(
+    r"(?i)\b(sessionid|csrftoken|ds_user_id|ig_did|ttwid|msToken|token|"
+    r"password|authorization)\b(\s*[:=]\s*)([^\s,;]+)"
+)
 
 
 def _media_kind(path: Path) -> MediaKind:
@@ -66,6 +75,22 @@ def _media_kind(path: Path) -> MediaKind:
     if suffix in _VIDEO_SUFFIXES:
         return MediaKind.VIDEO
     return MediaKind.DOCUMENT
+
+
+def _safe_gallery_dl_output(output: str | bytes | None) -> str:
+    """Keep useful diagnostics without ever putting session values in logs."""
+    if output is None:
+        return "<empty>"
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    output = _SENSITIVE_HEADER.sub("<redacted sensitive header>", output)
+    output = _SENSITIVE_VALUE.sub(r"\1\2<redacted>", output)
+    output = output.strip()
+    if not output:
+        return "<empty>"
+    if len(output) > _GALLERY_DL_LOG_LIMIT:
+        return f"…{output[-_GALLERY_DL_LOG_LIMIT:]}"
+    return output
 
 
 class _YtDlpLogger:
@@ -183,7 +208,10 @@ class YtDlpMediaDownloader:
             options["proxy"] = self._proxy_url
         cookies_file = self._cookies_files.get(platform) or self._cookies_file
         if cookies_file:
-            options["cookiefile"] = cookies_file
+            options["cookiefile"] = self._temporary_cookie_file(
+                cookies_file,
+                work_dir,
+            )
 
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
@@ -293,12 +321,29 @@ class YtDlpMediaDownloader:
                 text=True,
                 timeout=90,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            logger.warning(
+                "gallery-dl timed out after %s seconds for %s; stdout=%s; stderr=%s",
+                exc.timeout,
+                platform,
+                _safe_gallery_dl_output(exc.stdout),
+                _safe_gallery_dl_output(exc.stderr),
+            )
+            raise MediaDownloadError("gallery-dl could not download image media") from exc
+        except OSError as exc:
+            logger.warning("gallery-dl could not start for %s: %s", platform, exc)
             raise MediaDownloadError("gallery-dl could not download image media") from exc
 
         candidates = self._media_candidates(work_dir)
-        if result.returncode:
-            logger.warning("gallery-dl exited with status %s for %s", result.returncode, platform)
+        if result.returncode or not candidates:
+            logger.warning(
+                "gallery-dl result for %s: exit_code=%s, files=%s; stdout=%s; stderr=%s",
+                platform,
+                result.returncode,
+                len(candidates),
+                _safe_gallery_dl_output(getattr(result, "stdout", None)),
+                _safe_gallery_dl_output(getattr(result, "stderr", None)),
+            )
         if not candidates:
             message = "gallery-dl did not create an image file"
             if original_error is not None:
@@ -322,12 +367,24 @@ class YtDlpMediaDownloader:
         return sorted(
             (
                 path
-                for path in work_dir.iterdir()
+                for path in work_dir.rglob("*")
                 if path.is_file()
+                and ".cookies" not in path.relative_to(work_dir).parts
                 and not path.name.endswith((".part", ".ytdl", ".json"))
             ),
-            key=lambda item: item.name,
+            key=lambda item: str(item.relative_to(work_dir)),
         )
+
+    @staticmethod
+    def _temporary_cookie_file(source: str, work_dir: Path) -> str:
+        """Give yt-dlp a writable copy; Compose mounts the source as read-only."""
+        destination = work_dir / ".cookies" / "cookies.txt"
+        try:
+            destination.parent.mkdir(exist_ok=True)
+            shutil.copyfile(source, destination)
+        except OSError as exc:
+            raise MediaDownloadError("Could not prepare media cookies") from exc
+        return str(destination)
 
 
 class YtDlpMediaAdapter:
