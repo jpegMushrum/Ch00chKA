@@ -30,28 +30,51 @@ from ch00chka.domain import (
 
 logger = logging.getLogger(__name__)
 FILTERED_REPLY_TEXT = "Filtered"
+_REVISABLE_VIOLATIONS = frozenset({"add_uncertainty_disclaimer"})
 
 
 def _filtered_reply_text(review: ReviewResult) -> str:
     """Expose a useful reason without leaking reviewer instructions or raw codes."""
     violations = {violation.casefold() for violation in review.violations}
     if "too_long" in violations:
-        reason = "ответ получился слишком длинным"
+        reason = "ответ оказался длиннее, чем подходит для этого сообщения"
     elif "output_truncated" in violations or any(
         violation.startswith("incomplete_output:") for violation in violations
     ):
-        reason = "ответ оборвался до завершения"
-    elif "unsafe" in violations:
-        reason = "ответ не прошёл проверку безопасности"
-    elif any("identity" in violation or "persona" in violation for violation in violations):
-        reason = "ответ не соответствует заданному образу"
-    elif any("research" in violation or "fact" in violation for violation in violations):
-        reason = "в ответе есть непроверенные сведения"
-    elif any("repeat" in violation for violation in violations):
-        reason = "ответ повторяет уже сказанное"
+        reason = "ответ оборвался и не закончил мысль"
+    elif "unsafe_tone" in violations or "unsafe" in violations:
+        reason = "в ответе есть неуместная грубость, травля или опасный совет"
+    elif "identity_disclosure" in violations or any(
+        "identity" in violation for violation in violations
+    ):
+        reason = "ответ раскрывает, что Чоочка — бот или ИИ"
+    elif "style_mismatch" in violations or any(
+        "persona" in violation or "style" in violation for violation in violations
+    ):
+        reason = "ответ не соответствует характеру и тону Чоочки"
+    elif "unnecessary_repeat" in violations or any(
+        "repeat" in violation for violation in violations
+    ):
+        reason = "ответ повторяет уже сказанное и ничего не добавляет"
+    elif "prompt_leak" in violations:
+        reason = "ответ раскрывает внутренние инструкции"
+    elif "contradicts_research" in violations:
+        reason = "ответ противоречит найденным данным"
+    elif "unsupported_factual_claim" in violations:
+        reason = "ответ уверенно утверждает то, что не удалось подтвердить"
+    elif "add_uncertainty_disclaimer" in violations:
+        reason = "ответу не хватило оговорки о неуверенности"
     else:
-        reason = "ответ не прошёл проверку"
+        reason = "проверка не смогла подтвердить уместность ответа"
     return f"{FILTERED_REPLY_TEXT}: {reason}."
+
+
+def _can_retry_review(review: ReviewResult) -> bool:
+    return bool(
+        _REVISABLE_VIOLATIONS.intersection(
+            violation.casefold() for violation in review.violations
+        )
+    )
 
 
 class EmptyActionPlanner:
@@ -195,18 +218,9 @@ class MessageProcessor:
             review = await self._review(context, response)
 
             if review.verdict is ReviewVerdict.BLOCK:
-                self._log_rejection(message, response, review, research, decision)
-                return await self._filtered_result(
-                    plan=plan,
-                    decision=decision,
-                    review=review,
-                    research=research,
-                    message=message,
-                    memory_enabled=options.memory_enabled,
-                )
-
-            if review.verdict is ReviewVerdict.REVISE:
-                if not response.truncated:
+                if _can_retry_review(review):
+                    review = replace(review, verdict=ReviewVerdict.REVISE)
+                else:
                     self._log_rejection(message, response, review, research, decision)
                     return await self._filtered_result(
                         plan=plan,
@@ -216,7 +230,26 @@ class MessageProcessor:
                         message=message,
                         memory_enabled=options.memory_enabled,
                     )
-                revision_instruction = review.revision_instruction or (
+
+            if review.verdict is ReviewVerdict.REVISE:
+                if not response.truncated and not _can_retry_review(review):
+                    self._log_rejection(message, response, review, research, decision)
+                    return await self._filtered_result(
+                        plan=plan,
+                        decision=decision,
+                        review=review,
+                        research=research,
+                        message=message,
+                        memory_enabled=options.memory_enabled,
+                    )
+                revision_instruction = review.revision_instruction
+                if not revision_instruction and _can_retry_review(review):
+                    revision_instruction = (
+                        "Сохрани полезный смысл, но сформулируй утверждение менее "
+                        "уверенно и добавь короткую естественную оговорку вроде "
+                        "«но могу ошибаться» или «это стоит перепроверить»."
+                    )
+                revision_instruction = revision_instruction or (
                     "Исправь нарушения: " + ", ".join(review.violations)
                 )
                 response = await self._actor.respond(

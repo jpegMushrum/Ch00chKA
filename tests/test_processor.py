@@ -314,7 +314,7 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result.reply_text,
-            "Filtered: ответ получился слишком длинным.",
+            "Filtered: ответ оказался длиннее, чем подходит для этого сообщения.",
         )
         self.assertEqual(actor.calls, [(None, None)])
         self.assertEqual(observer.calls, 1)
@@ -342,7 +342,10 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await processor.process(MESSAGE)
 
-        self.assertEqual(result.reply_text, "Filtered: ответ не прошёл проверку.")
+        self.assertEqual(
+            result.reply_text,
+            "Filtered: проверка не смогла подтвердить уместность ответа.",
+        )
         self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
         self.assertEqual(len(actor.calls), 2)
 
@@ -363,12 +366,43 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result.reply_text,
-            "Filtered: ответ не прошёл проверку безопасности.",
+            "Filtered: в ответе есть неуместная грубость, травля или опасный совет.",
         )
         self.assertEqual(
             result.plan.actions[-1].payload["text"],
-            "Filtered: ответ не прошёл проверку безопасности.",
+            "Filtered: в ответе есть неуместная грубость, травля или опасный совет.",
         )
+
+    async def test_uncertain_facts_are_revised_instead_of_immediately_filtered(self):
+        repository = FakeRepository()
+        actor = ScriptedActor(
+            ["Это точно так.", "Это вроде так, но могу ошибаться."]
+        )
+        observer = ScriptedObserver(
+            [
+                ReviewResult(
+                    ReviewVerdict.REVISE,
+                    violations=("add_uncertainty_disclaimer",),
+                    revision_instruction=(
+                        "Сохрани ответ, но добавь короткую оговорку о неуверенности."
+                    ),
+                ),
+                ReviewResult(ReviewVerdict.ACCEPT),
+            ]
+        )
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=observer,
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertEqual(result.reply_text, "Это вроде так, но могу ошибаться.")
+        self.assertEqual(len(actor.calls), 2)
+        self.assertEqual(observer.calls, 2)
 
     async def test_truncated_response_is_revised_even_when_observer_is_disabled(self):
         repository = FakeRepository()
