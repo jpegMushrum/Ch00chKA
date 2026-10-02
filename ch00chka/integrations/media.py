@@ -7,7 +7,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Mapping
 
 import yt_dlp
 from aiogram import types
@@ -60,6 +60,7 @@ class YtDlpMediaDownloader:
         max_concurrent_downloads: int,
         proxy_url: str | None = None,
         cookies_file: str | None = None,
+        cookies_files: Mapping[MediaPlatform, str] | None = None,
     ) -> None:
         self._temp_dir = Path(temp_dir).resolve()
         self._cache_dir = self._temp_dir / "cache"
@@ -67,6 +68,11 @@ class YtDlpMediaDownloader:
         self._max_duration_seconds = max_duration_seconds
         self._proxy_url = proxy_url
         self._cookies_file = cookies_file
+        self._cookies_files = {
+            platform: path.strip()
+            for platform, path in (cookies_files or {}).items()
+            if path and path.strip()
+        }
         self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -138,8 +144,9 @@ class YtDlpMediaDownloader:
         }
         if self._proxy_url:
             options["proxy"] = self._proxy_url
-        if self._cookies_file:
-            options["cookiefile"] = self._cookies_file
+        cookies_file = self._cookies_files.get(platform) or self._cookies_file
+        if cookies_file:
+            options["cookiefile"] = cookies_file
 
         try:
             with yt_dlp.YoutubeDL(options) as ydl:

@@ -52,6 +52,37 @@ class MediaDownloaderTests(unittest.TestCase):
         self.assertEqual(media.title, "Test TikTok")
         self.assertNotIn("impersonate", FakeYoutubeDL.last_options)
 
+    def test_uses_the_cookie_file_matching_the_media_platform(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloader = YtDlpMediaDownloader(
+                temp_dir=temp_dir,
+                max_bytes=48_000_000,
+                max_duration_seconds=600,
+                max_concurrent_downloads=1,
+                cookies_file="/run/secrets/ch00chka/fallback-cookies.txt",
+                cookies_files={
+                    MediaPlatform.YOUTUBE: "/run/secrets/ch00chka/youtube-cookies.txt",
+                    MediaPlatform.TIKTOK: "/run/secrets/ch00chka/tiktok-cookies.txt",
+                },
+            )
+            work_dir = Path(temp_dir) / "work"
+            work_dir.mkdir()
+
+            with patch(
+                "ch00chka.integrations.media.yt_dlp.YoutubeDL",
+                FakeYoutubeDL,
+            ):
+                downloader._download_sync(
+                    "https://www.youtube.com/watch?v=example",
+                    MediaPlatform.YOUTUBE,
+                    work_dir,
+                )
+
+        self.assertEqual(
+            FakeYoutubeDL.last_options["cookiefile"],
+            "/run/secrets/ch00chka/youtube-cookies.txt",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

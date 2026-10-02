@@ -133,6 +133,10 @@ docker compose up -d --build
 Сам `yt-dlp` закреплён на проверенном nightly от 18 августа 2026 года: в нём
 исправлен TikTok challenge, который ещё воспроизводился в сборке от 4 августа.
 TikTok может дополнительно блокировать IP дата-центров. Для такого случая без
-изменения кода предусмотрены `MEDIA_PROXY_URL` и `MEDIA_COOKIES_FILE`; секрет
-прокси не выводится конфигурацией приложения. Cookies-файл должен быть доступен
-внутри контейнера по указанному пути и иметь Netscape-формат, понятный `yt-dlp`.
+изменения кода предусмотрены `MEDIA_PROXY_URL` и cookies в Netscape-формате,
+понятном `yt-dlp`. Compose монтирует отдельные read-only файлы из
+`./cookies/` для YouTube, TikTok и Instagram; пути задаются переменными
+`MEDIA_YOUTUBE_COOKIES_FILE`, `MEDIA_TIKTOK_COOKIES_FILE` и
+`MEDIA_INSTAGRAM_COOKIES_FILE`. Старый `MEDIA_COOKIES_FILE` остаётся запасным
+общим файлом для платформы, у которой не задан отдельный путь. Cookies и прокси
+не выводятся конфигурацией приложения.

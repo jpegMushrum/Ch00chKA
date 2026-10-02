@@ -19,6 +19,7 @@ from ch00chka.application.planners import UrlActionPlanner
 from ch00chka.domain import ChatFeature
 from ch00chka.infrastructure import SQLiteConversationRepository
 from ch00chka.integrations.media import YtDlpMediaAdapter, YtDlpMediaDownloader
+from ch00chka.integrations.media_urls import MediaPlatform
 from ch00chka.integrations.research_sources import PublicResearchBackend
 from ch00chka.presentation.telegram import create_router
 from config import Settings
@@ -144,6 +145,11 @@ def build_application(settings: Settings) -> Application:
             else None
         ),
         cookies_file=settings.media_cookies_file or None,
+        cookies_files={
+            MediaPlatform.YOUTUBE: settings.media_youtube_cookies_file,
+            MediaPlatform.TIKTOK: settings.media_tiktok_cookies_file,
+            MediaPlatform.INSTAGRAM: settings.media_instagram_cookies_file,
+        },
     )
     router = create_router(
         processor=processor,

@@ -42,6 +42,9 @@ services:
       MEDIA_MAX_CONCURRENT_DOWNLOADS: ${MEDIA_MAX_CONCURRENT_DOWNLOADS:-2}
       MEDIA_PROXY_URL: ${MEDIA_PROXY_URL:-}
       MEDIA_COOKIES_FILE: ${MEDIA_COOKIES_FILE:-}
+      MEDIA_YOUTUBE_COOKIES_FILE: ${MEDIA_YOUTUBE_COOKIES_FILE:-/run/secrets/ch00chka/youtube-cookies.txt}
+      MEDIA_TIKTOK_COOKIES_FILE: ${MEDIA_TIKTOK_COOKIES_FILE:-/run/secrets/ch00chka/tiktok-cookies.txt}
+      MEDIA_INSTAGRAM_COOKIES_FILE: ${MEDIA_INSTAGRAM_COOKIES_FILE:-/run/secrets/ch00chka/instagram-cookies.txt}
       LOCAL_MEDIA_MAX_BYTES: ${LOCAL_MEDIA_MAX_BYTES:-1900000000}
       LOCAL_MEDIA_MAX_DURATION_SECONDS: ${LOCAL_MEDIA_MAX_DURATION_SECONDS:-14400}
       DB_PATH: /data/bot_talker_memory.db
@@ -53,6 +56,9 @@ services:
         required: false
     volumes:
       - bot-data:/data
+      - ./cookies/youtube-cookies.txt:/run/secrets/ch00chka/youtube-cookies.txt:ro
+      - ./cookies/tiktok-cookies.txt:/run/secrets/ch00chka/tiktok-cookies.txt:ro
+      - ./cookies/instagram-cookies.txt:/run/secrets/ch00chka/instagram-cookies.txt:ro
 
   searxng:
     image: searxng/searxng@sha256:3aed6b4bfb4e6a2b3b94c890dafb3f35cb2588493b83818434aa260e8bdeb4d4
