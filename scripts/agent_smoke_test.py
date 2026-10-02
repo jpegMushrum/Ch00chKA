@@ -34,6 +34,12 @@ async def run(text: str, force_reply: bool) -> None:
         async def recent_messages(self, *, chat_id, limit):
             return tuple()
 
+        async def get_summary(self, chat_id):
+            return ""
+
+        async def list_participants(self, chat_id):
+            return tuple()
+
     participation = LLMAgentParticipationDecider(
         gateway=gateway,
         model=settings.ai_participation_model,
@@ -45,6 +51,7 @@ async def run(text: str, force_reply: bool) -> None:
         "should_reply": decision.should_reply,
         "reason": decision.reason,
         "confidence": decision.confidence,
+        "mentioned_participant_ids": decision.mentioned_participant_ids,
     }, ensure_ascii=False, indent=2))
     if not decision.should_reply and not force_reply:
         return

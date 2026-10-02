@@ -8,11 +8,13 @@ from ch00chka.domain import NormalizedMessage
 def current_message_payload(message: NormalizedMessage) -> dict:
     reply = message.reply_to_message
     return {
+        "author_user_id": message.user_id,
         "author": message.user_name,
         "text": message.text,
         "reply_to": (
             {
                 "message_id": reply.message_id,
+                "user_id": reply.user_id,
                 "author": reply.user_name,
                 "text": reply.text,
                 "is_bot": reply.is_bot,

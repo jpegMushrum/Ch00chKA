@@ -59,6 +59,7 @@ class ReferencedMessage:
     user_name: str
     text: str
     is_bot: bool = False
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,7 @@ class ChatMessage:
     role: str
     user_name: str
     text: str
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +96,22 @@ class ChatParticipant:
 
 
 @dataclass(frozen=True, slots=True)
+class ParticipantMemory:
+    """A compact, chat-scoped set of durable facts about one participant."""
+
+    user_id: int
+    display_name: str
+    username: str | None = None
+    facts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SummarizableMessage:
     id: int
     role: str
     user_name: str
     text: str
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +130,7 @@ class ParticipationDecision:
     reason: ReplyReason
     confidence: float = 1.0
     response_depth: ResponseDepth = ResponseDepth.BRIEF
+    mentioned_participant_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +143,12 @@ class ConversationContext:
     response_depth: ResponseDepth = ResponseDepth.NORMAL
     research_facts: tuple["ResearchFact", ...] = ()
     research_performed: bool = False
+    participant_memories: tuple[ParticipantMemory, ...] = ()
+
+    @property
+    def chat_state(self) -> str:
+        """The durable state of this chat (kept as ``summary`` for DB compatibility)."""
+        return self.summary
 
 
 @dataclass(frozen=True, slots=True)

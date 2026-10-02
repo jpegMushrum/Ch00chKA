@@ -7,9 +7,11 @@ from pathlib import Path
 try:
     import aiosqlite
 
+    from ch00chka.domain import ParticipantMemory
     from ch00chka.infrastructure.sqlite_repository import SQLiteConversationRepository
 except ModuleNotFoundError:
     aiosqlite = None
+    ParticipantMemory = None
     SQLiteConversationRepository = None
 
 
@@ -78,6 +80,52 @@ class RepositoryAliasTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(chat_100[0].username)
             self.assertEqual(len(chat_200), 1)
             self.assertEqual(chat_200[0].user_id, 2)
+
+    async def test_participant_memories_are_separate_and_scoped_to_the_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteConversationRepository(
+                db_path=str(Path(directory) / "memory.db"),
+                default_personality="По умолчанию",
+            )
+            await repository.initialize()
+            await repository.upsert_participant(
+                chat_id=100,
+                user_id=1,
+                display_name="Alice",
+                username="alice",
+            )
+            await repository.upsert_participant(
+                chat_id=100,
+                user_id=2,
+                display_name="Bob",
+                username="bob",
+            )
+            await repository.upsert_participant(
+                chat_id=200,
+                user_id=1,
+                display_name="Alice elsewhere",
+                username="alice",
+            )
+            await repository.save_participant_memories(
+                chat_id=100,
+                memories=(
+                    ParticipantMemory(1, "Alice", "alice", ("Любит моды.",)),
+                    ParticipantMemory(2, "Bob", "bob", ("Работает дизайнером.",)),
+                ),
+            )
+
+            memories = await repository.get_participant_memories(
+                chat_id=100,
+                user_ids=(2, 1),
+            )
+            other_chat = await repository.get_participant_memories(
+                chat_id=200,
+                user_ids=(1,),
+            )
+
+            self.assertEqual([memory.user_id for memory in memories], [2, 1])
+            self.assertEqual(memories[0].facts, ("Работает дизайнером.",))
+            self.assertEqual(other_chat, ())
 
     async def test_existing_chat_meta_table_is_migrated(self):
         with tempfile.TemporaryDirectory() as directory:

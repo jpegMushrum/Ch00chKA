@@ -11,9 +11,38 @@ import aiosqlite
 from ch00chka.domain import (
     ChatMessage,
     ChatParticipant,
+    ParticipantMemory,
     SummarizableMessage,
     SummaryBatch,
 )
+
+
+def _decode_facts(raw_facts: object) -> tuple[str, ...]:
+    if not raw_facts:
+        return ()
+    try:
+        value = json.loads(str(raw_facts))
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(value, list):
+        return ()
+    return _normalize_facts(value)
+
+
+def _normalize_facts(values: Sequence[object]) -> tuple[str, ...]:
+    facts: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        fact = " ".join(value.split())[:320]
+        key = fact.casefold()
+        if fact and key not in seen:
+            seen.add(key)
+            facts.append(fact)
+        if len(facts) == 12:
+            break
+    return tuple(facts)
 
 
 class SQLiteConversationRepository:
@@ -43,7 +72,8 @@ class SQLiteConversationRepository:
                     chat_id INTEGER NOT NULL,
                     role TEXT NOT NULL,
                     user_name TEXT NOT NULL,
-                    text TEXT NOT NULL
+                    text TEXT NOT NULL,
+                    user_id INTEGER
                 )
                 """
             )
@@ -73,6 +103,17 @@ class SQLiteConversationRepository:
             )
             await db.execute(
                 """
+                CREATE TABLE IF NOT EXISTS participant_memories (
+                    chat_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    facts TEXT NOT NULL DEFAULT '[]',
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (chat_id, user_id)
+                )
+                """
+            )
+            await db.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_features (
                     chat_id INTEGER NOT NULL,
                     feature TEXT NOT NULL,
@@ -93,6 +134,10 @@ class SQLiteConversationRepository:
                     "ALTER TABLE chat_meta ADD COLUMN "
                     "summary_message_id INTEGER NOT NULL DEFAULT 0"
                 )
+            async with db.execute("PRAGMA table_info(chat_history)") as cursor:
+                history_columns = {str(row[1]) for row in await cursor.fetchall()}
+            if "user_id" not in history_columns:
+                await db.execute("ALTER TABLE chat_history ADD COLUMN user_id INTEGER")
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_chat_history_chat_id_id
@@ -103,6 +148,12 @@ class SQLiteConversationRepository:
                 """
                 CREATE INDEX IF NOT EXISTS idx_chat_participants_chat_last_seen
                 ON chat_participants(chat_id, last_seen DESC)
+                """
+            )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_participant_memories_chat_user
+                ON participant_memories(chat_id, user_id)
                 """
             )
             await db.commit()
@@ -206,6 +257,77 @@ class SQLiteConversationRepository:
             for user_id, display_name, username in rows
         )
 
+    async def get_participant_memories(
+        self,
+        *,
+        chat_id: int,
+        user_ids: Sequence[int],
+    ) -> Sequence[ParticipantMemory]:
+        ordered_ids = tuple(dict.fromkeys(int(user_id) for user_id in user_ids))
+        if not ordered_ids:
+            return ()
+        placeholders = ", ".join("?" for _ in ordered_ids)
+        async with self._connection() as db:
+            async with db.execute(
+                f"""
+                SELECT p.user_id, p.display_name, p.username, m.facts
+                FROM chat_participants AS p
+                LEFT JOIN participant_memories AS m
+                    ON m.chat_id = p.chat_id AND m.user_id = p.user_id
+                WHERE p.chat_id = ? AND p.user_id IN ({placeholders})
+                """,
+                (chat_id, *ordered_ids),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        by_id: dict[int, ParticipantMemory] = {}
+        for user_id, display_name, username, raw_facts in rows:
+            facts = _decode_facts(raw_facts)
+            if not facts:
+                continue
+            by_id[int(user_id)] = ParticipantMemory(
+                user_id=int(user_id),
+                display_name=str(display_name),
+                username=str(username) if username else None,
+                facts=facts,
+            )
+        return tuple(by_id[user_id] for user_id in ordered_ids if user_id in by_id)
+
+    async def save_participant_memories(
+        self,
+        *,
+        chat_id: int,
+        memories: Sequence[ParticipantMemory],
+    ) -> None:
+        if not memories:
+            return
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            for memory in memories:
+                facts = _normalize_facts(memory.facts)
+                if not facts:
+                    await db.execute(
+                        "DELETE FROM participant_memories WHERE chat_id = ? AND user_id = ?",
+                        (chat_id, memory.user_id),
+                    )
+                    continue
+                await db.execute(
+                    """
+                    INSERT INTO participant_memories (chat_id, user_id, facts, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                        facts = excluded.facts,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        chat_id,
+                        memory.user_id,
+                        json.dumps(facts, ensure_ascii=False),
+                        time.time(),
+                    ),
+                )
+            await db.commit()
+
     async def get_aliases(self, chat_id: int) -> tuple[str, ...]:
         async with self._connection() as db:
             async with db.execute(
@@ -247,14 +369,15 @@ class SQLiteConversationRepository:
         role: str,
         user_name: str,
         text: str,
+        user_id: int | None = None,
     ) -> None:
         async with self._connection() as db:
             await db.execute(
                 """
-                INSERT INTO chat_history (chat_id, role, user_name, text)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO chat_history (chat_id, role, user_name, text, user_id)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (chat_id, role, user_name, text),
+                (chat_id, role, user_name, text, user_id),
             )
             await db.execute(
                 """
@@ -276,7 +399,7 @@ class SQLiteConversationRepository:
         async with self._connection() as db:
             async with db.execute(
                 """
-                SELECT role, user_name, text
+                SELECT role, user_name, text, user_id
                 FROM chat_history
                 WHERE chat_id = ?
                 ORDER BY id DESC
@@ -287,8 +410,13 @@ class SQLiteConversationRepository:
                 rows = await cursor.fetchall()
 
         return tuple(
-            ChatMessage(role=role, user_name=user_name, text=text)
-            for role, user_name, text in reversed(rows)
+            ChatMessage(
+                role=str(role),
+                user_name=str(user_name),
+                text=str(text),
+                user_id=int(user_id) if user_id is not None else None,
+            )
+            for role, user_name, text, user_id in reversed(rows)
             if text
         )
 
@@ -324,7 +452,7 @@ class SQLiteConversationRepository:
             summary_message_id = int(meta[1]) if meta and meta[1] else 0
             async with db.execute(
                 """
-                SELECT id, role, user_name, text
+                SELECT id, role, user_name, text, user_id
                 FROM chat_history
                 WHERE chat_id = ? AND id > ?
                 ORDER BY id ASC
@@ -343,8 +471,9 @@ class SQLiteConversationRepository:
                 role=str(role),
                 user_name=str(user_name),
                 text=str(text),
+                user_id=int(user_id) if user_id is not None else None,
             )
-            for message_id, role, user_name, text in rows[:eligible_count]
+            for message_id, role, user_name, text, user_id in rows[:eligible_count]
             if text
         )
         if not messages:

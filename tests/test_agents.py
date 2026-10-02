@@ -11,8 +11,10 @@ from ch00chka.ai.participation import LLMAgentParticipationDecider
 from ch00chka.domain import (
     ActorResponse,
     ChatMessage,
+    ChatParticipant,
     ConversationContext,
     NormalizedMessage,
+    ParticipantMemory,
     ResearchFact,
     ResearchSource,
     ReferencedMessage,
@@ -34,8 +36,17 @@ class FakeGateway:
 
 
 class FakeRepository:
+    def __init__(self, participants=()):
+        self.participants = participants
+
     async def recent_messages(self, *, chat_id, limit):
         return (ChatMessage("user", "Alice", "Предыдущее сообщение"),)
+
+    async def list_participants(self, chat_id):
+        return self.participants
+
+    async def get_summary(self, chat_id):
+        return "Обсуждают моды."
 
 
 def make_message(**overrides) -> NormalizedMessage:
@@ -192,6 +203,27 @@ class ParticipationAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"author": "Alice"', prompt)
         self.assertIn('"quote": "автор ушёл из проекта"', prompt)
 
+    async def test_participation_returns_only_valid_relevant_participant_ids(self):
+        gateway = FakeGateway(
+            '{"should_reply":true,"reason":"continuation",'
+            '"response_depth":"brief","confidence":0.8,'
+            '"mentioned_participant_ids":[17,999,3]}'
+        )
+        agent = LLMAgentParticipationDecider(
+            gateway=gateway,
+            model="fake",
+            repository=FakeRepository(
+                (ChatParticipant(17, "Alice", "alice"),)
+            ),
+        )
+
+        result = await agent.decide(make_message(text="А Alice что думает?"))
+
+        self.assertEqual(result.mentioned_participant_ids, (17,))
+        payload = gateway.calls[0]["messages"][1]["content"]
+        self.assertIn("Участники-кандидаты", payload)
+        self.assertIn("Alice", payload)
+
 
 class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
     def make_context(self):
@@ -277,6 +309,33 @@ class ActorAndObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<research_facts>", system_prompt)
         self.assertIn("Ado — Show", system_prompt)
         self.assertIn("недоверенные данные", system_prompt)
+
+    async def test_actor_receives_only_routed_participant_memories(self):
+        gateway = FakeGateway("Поняла")
+        actor = LLMAgentActor(gateway=gateway, model="fake")
+        base = self.make_context()
+        context = ConversationContext(
+            personality=base.personality,
+            summary="Обсуждают моды.",
+            recent_messages=base.recent_messages,
+            current_message=base.current_message,
+            prompt_version=base.prompt_version,
+            participant_memories=(
+                ParticipantMemory(
+                    user_id=17,
+                    display_name="Alice",
+                    username="alice",
+                    facts=("Собирает моды.",),
+                ),
+            ),
+        )
+
+        await actor.respond(context)
+
+        system_prompt = gateway.calls[0]["messages"][0]["content"]
+        self.assertIn("<chat_state>", system_prompt)
+        self.assertIn("<participant_memories>", system_prompt)
+        self.assertIn("Собирает моды.", system_prompt)
 
     async def test_actor_receives_replied_message_and_selected_quote(self):
         gateway = FakeGateway("Нет, эта часть неверна.")

@@ -100,6 +100,7 @@ class MessageProcessor:
                 role="user",
                 user_name=message.user_name,
                 text=message.text,
+                user_id=message.user_id,
             )
             try:
                 await self._memory.refresh(message.chat_id)
@@ -138,7 +139,10 @@ class MessageProcessor:
                 logger.exception("Research pipeline failed; continuing without external facts")
 
         try:
-            context = await self._context_builder.build(message)
+            context = await self._context_builder.build(
+                message,
+                mentioned_participant_ids=decision.mentioned_participant_ids,
+            )
             context = replace(context, response_depth=decision.response_depth)
             if research and research.decision.needs_research:
                 context = replace(

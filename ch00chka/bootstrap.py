@@ -9,6 +9,7 @@ from ch00chka.ai.actor import LLMAgentActor
 from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator
 from ch00chka.ai.context import RepositoryContextBuilder
 from ch00chka.ai.gateway import DeepSeekGateway
+from ch00chka.ai.memory_router import RepositoryMemoryRouter
 from ch00chka.ai.observer import LLMAgentObserver
 from ch00chka.ai.participation import LLMAgentParticipationDecider
 from ch00chka.ai.research import LLMAgentResearcher
@@ -66,10 +67,16 @@ def build_application(settings: Settings) -> Application:
         gateway=gateway,
         model=settings.ai_participation_model,
         repository=repository,
+        participant_candidates_limit=settings.ai_memory_participant_candidates_limit,
     )
     context_builder = RepositoryContextBuilder(
         repository=repository,
         recent_messages_limit=settings.ai_recent_messages_limit,
+        memory_router=RepositoryMemoryRouter(
+            repository=repository,
+            max_profiles=settings.ai_memory_max_profiles,
+            max_facts_per_profile=settings.ai_memory_max_facts_per_profile,
+        ),
     )
     actor = LLMAgentActor(
         gateway=gateway,

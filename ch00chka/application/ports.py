@@ -9,6 +9,7 @@ from ch00chka.domain import (
     ChatParticipant,
     ConversationContext,
     NormalizedMessage,
+    ParticipantMemory,
     ParticipationDecision,
     ReviewResult,
     ResearchResult,
@@ -26,6 +27,7 @@ class ConversationRepository(Protocol):
         role: str,
         user_name: str,
         text: str,
+        user_id: int | None = None,
     ) -> None: ...
 
     async def recent_messages(
@@ -73,6 +75,20 @@ class ConversationRepository(Protocol):
 
     async def list_participants(self, chat_id: int) -> Sequence[ChatParticipant]: ...
 
+    async def get_participant_memories(
+        self,
+        *,
+        chat_id: int,
+        user_ids: Sequence[int],
+    ) -> Sequence[ParticipantMemory]: ...
+
+    async def save_participant_memories(
+        self,
+        *,
+        chat_id: int,
+        memories: Sequence[ParticipantMemory],
+    ) -> None: ...
+
     async def get_feature_overrides(self, chat_id: int) -> dict[str, bool]: ...
 
     async def toggle_feature(
@@ -93,7 +109,12 @@ class Researcher(Protocol):
 
 
 class ContextBuilder(Protocol):
-    async def build(self, message: NormalizedMessage) -> ConversationContext: ...
+    async def build(
+        self,
+        message: NormalizedMessage,
+        *,
+        mentioned_participant_ids: Sequence[int] = (),
+    ) -> ConversationContext: ...
 
 
 class ConversationMemory(Protocol):

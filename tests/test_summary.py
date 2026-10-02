@@ -22,12 +22,19 @@ class FakeRepository:
     def __init__(self, batch: SummaryBatch | None) -> None:
         self.batch = batch
         self.saved = []
+        self.saved_participant_memories = None
 
     async def get_summary_batch(self, **kwargs):
         return self.batch
 
     async def save_summary(self, **kwargs):
         self.saved.append(kwargs)
+
+    async def get_participant_memories(self, **kwargs):
+        return ()
+
+    async def save_participant_memories(self, **kwargs):
+        self.saved_participant_memories = kwargs
 
 
 def make_memory(
@@ -62,7 +69,10 @@ class SummaryAgentTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         )
-        gateway = FakeGateway("Alice любит японскую музыку. Bob работает дизайнером.")
+        gateway = FakeGateway(
+            '{"chat_state":"Обсуждали японскую музыку.",'
+            '"participant_memories":[]}'
+        )
 
         updated = await make_memory(gateway, repository).refresh(42)
 
@@ -75,7 +85,30 @@ class SummaryAgentTests(unittest.IsolatedAsyncioTestCase):
             gateway.calls[0]["messages"][1]["content"],
         )
         self.assertEqual(gateway.calls[0]["temperature"], 0.2)
-        self.assertEqual(gateway.calls[0]["max_tokens"], 2000)
+        self.assertEqual(gateway.calls[0]["max_tokens"], 1200)
+        self.assertEqual(repository.saved_participant_memories["memories"], ())
+
+    async def test_saves_people_memory_separately_from_chat_state(self):
+        repository = FakeRepository(
+            SummaryBatch(
+                current_summary="Обсуждали игры.",
+                messages=(
+                    SummarizableMessage(10, "user", "Bob", "Я собираю моды", 17),
+                ),
+            )
+        )
+        gateway = FakeGateway(
+            '{"chat_state":"Обсуждают моды.","participant_memories":['
+            '{"user_id":17,"facts":["Собирает моды."]}]}'
+        )
+
+        updated = await make_memory(gateway, repository).refresh(42)
+
+        self.assertTrue(updated)
+        memories = repository.saved_participant_memories["memories"]
+        self.assertEqual(memories[0].user_id, 17)
+        self.assertEqual(memories[0].facts, ("Собирает моды.",))
+        self.assertEqual(repository.saved[0]["summary"], "Обсуждают моды.")
 
     async def test_does_not_call_model_without_eligible_batch(self):
         repository = FakeRepository(None)
@@ -117,6 +150,20 @@ class SummaryAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(first)
         self.assertFalse(second)
         self.assertEqual(len(gateway.calls), 1)
+        self.assertEqual(repository.saved, [])
+
+    async def test_invalid_memory_update_does_not_advance_cursor(self):
+        repository = FakeRepository(
+            SummaryBatch(
+                current_summary="",
+                messages=(SummarizableMessage(5, "user", "Bob", "Факт", 7),),
+            )
+        )
+        memory = make_memory(repository=repository, gateway=FakeGateway("не JSON"))
+
+        updated = await memory.refresh(42)
+
+        self.assertFalse(updated)
         self.assertEqual(repository.saved, [])
 
     async def test_retry_is_allowed_after_cooldown(self):

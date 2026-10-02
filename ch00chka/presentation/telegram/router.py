@@ -441,6 +441,9 @@ def create_router(
                     user_name=_message_author(replied_message),
                     text=_reference_text(replied_message),
                     is_bot=bool(reply_from and reply_from.is_bot),
+                    user_id=(
+                        reply_from.id if reply_from and not reply_from.is_bot else None
+                    ),
                 )
                 if replied_message
                 else None

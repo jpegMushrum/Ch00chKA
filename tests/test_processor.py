@@ -37,8 +37,8 @@ class FakeRepository:
     def __init__(self) -> None:
         self.messages: list[ChatMessage] = []
 
-    async def add_message(self, *, chat_id, role, user_name, text) -> None:
-        self.messages.append(ChatMessage(role, user_name, text))
+    async def add_message(self, *, chat_id, role, user_name, text, user_id=None) -> None:
+        self.messages.append(ChatMessage(role, user_name, text, user_id))
 
 
 class FakeParticipation:
@@ -61,7 +61,7 @@ class FakeParticipation:
 
 
 class FakeContextBuilder:
-    async def build(self, message):
+    async def build(self, message, *, mentioned_participant_ids=()):
         return ConversationContext(
             personality="Дружелюбный",
             summary="",
