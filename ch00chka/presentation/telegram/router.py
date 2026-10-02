@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _FEATURE_CALLBACK_PREFIX = "feature:"
 _FEATURE_LABELS: tuple[tuple[ChatFeature, str], ...] = (
     (ChatFeature.AI_RESPONSES, "Ответы ИИ"),
-    (ChatFeature.MEMORY, "Запоминание сообщений"),
+    (ChatFeature.MEMORY, "Память чата"),
     (ChatFeature.RESEARCH, "Поиск в интернете"),
     (ChatFeature.OBSERVER, "Проверка ответов"),
     (ChatFeature.YOUTUBE, "YouTube"),
