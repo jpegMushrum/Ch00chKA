@@ -312,7 +312,10 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("ch00chka.application.processor", level="WARNING") as logs:
             result = await processor.process(MESSAGE)
 
-        self.assertEqual(result.reply_text, "Filtered")
+        self.assertEqual(
+            result.reply_text,
+            "Filtered: ответ получился слишком длинным.",
+        )
         self.assertEqual(actor.calls, [(None, None)])
         self.assertEqual(observer.calls, 1)
         self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
@@ -339,7 +342,7 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await processor.process(MESSAGE)
 
-        self.assertEqual(result.reply_text, "Filtered")
+        self.assertEqual(result.reply_text, "Filtered: ответ не прошёл проверку.")
         self.assertEqual([item.role for item in repository.messages], ["user", "assistant"])
         self.assertEqual(len(actor.calls), 2)
 
@@ -358,8 +361,14 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await processor.process(MESSAGE)
 
-        self.assertEqual(result.reply_text, "Filtered")
-        self.assertEqual(result.plan.actions[-1].payload["text"], "Filtered")
+        self.assertEqual(
+            result.reply_text,
+            "Filtered: ответ не прошёл проверку безопасности.",
+        )
+        self.assertEqual(
+            result.plan.actions[-1].payload["text"],
+            "Filtered: ответ не прошёл проверку безопасности.",
+        )
 
     async def test_truncated_response_is_revised_even_when_observer_is_disabled(self):
         repository = FakeRepository()

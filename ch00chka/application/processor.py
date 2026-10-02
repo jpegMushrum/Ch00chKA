@@ -32,6 +32,28 @@ logger = logging.getLogger(__name__)
 FILTERED_REPLY_TEXT = "Filtered"
 
 
+def _filtered_reply_text(review: ReviewResult) -> str:
+    """Expose a useful reason without leaking reviewer instructions or raw codes."""
+    violations = {violation.casefold() for violation in review.violations}
+    if "too_long" in violations:
+        reason = "ответ получился слишком длинным"
+    elif "output_truncated" in violations or any(
+        violation.startswith("incomplete_output:") for violation in violations
+    ):
+        reason = "ответ оборвался до завершения"
+    elif "unsafe" in violations:
+        reason = "ответ не прошёл проверку безопасности"
+    elif any("identity" in violation or "persona" in violation for violation in violations):
+        reason = "ответ не соответствует заданному образу"
+    elif any("research" in violation or "fact" in violation for violation in violations):
+        reason = "в ответе есть непроверенные сведения"
+    elif any("repeat" in violation for violation in violations):
+        reason = "ответ повторяет уже сказанное"
+    else:
+        reason = "ответ не прошёл проверку"
+    return f"{FILTERED_REPLY_TEXT}: {reason}."
+
+
 class EmptyActionPlanner:
     async def plan(self, message: NormalizedMessage) -> ActionPlan:
         return ActionPlan()
@@ -277,10 +299,11 @@ class MessageProcessor:
         message: NormalizedMessage,
         memory_enabled: bool,
     ) -> ProcessingResult:
+        filtered_text = _filtered_reply_text(review)
         filtered_plan = plan.with_action(
             PlannedAction(
                 type=ActionType.CHAT_REPLY,
-                payload={"text": FILTERED_REPLY_TEXT},
+                payload={"text": filtered_text},
             )
         )
         if memory_enabled:
@@ -288,12 +311,12 @@ class MessageProcessor:
                 chat_id=message.chat_id,
                 role="assistant",
                 user_name=message.bot_name,
-                text=FILTERED_REPLY_TEXT,
+                text=filtered_text,
             )
         return ProcessingResult(
             plan=filtered_plan,
             participation=decision,
-            reply_text=FILTERED_REPLY_TEXT,
+            reply_text=filtered_text,
             review=review,
             research=research,
         )
