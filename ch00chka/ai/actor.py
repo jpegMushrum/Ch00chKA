@@ -69,6 +69,7 @@ class LLMAgentActor:
                     "user_id": memory.user_id,
                     "name": memory.display_name,
                     "username": memory.username,
+                    "aliases": memory.aliases,
                     "facts": memory.facts,
                 }
                 for memory in context.participant_memories

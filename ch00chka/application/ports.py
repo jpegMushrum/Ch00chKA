@@ -7,6 +7,7 @@ from ch00chka.domain import (
     ActorResponse,
     ChatMessage,
     ChatParticipant,
+    ParticipantAlias,
     ConversationContext,
     NormalizedMessage,
     ParticipantMemory,
@@ -74,6 +75,21 @@ class ConversationRepository(Protocol):
     ) -> None: ...
 
     async def list_participants(self, chat_id: int) -> Sequence[ChatParticipant]: ...
+
+    async def list_participant_aliases(
+        self,
+        chat_id: int,
+    ) -> Sequence[ParticipantAlias]: ...
+
+    async def save_participant_aliases(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        aliases: Sequence[str],
+        source: str,
+        confidence: int,
+    ) -> None: ...
 
     async def get_participant_memories(
         self,

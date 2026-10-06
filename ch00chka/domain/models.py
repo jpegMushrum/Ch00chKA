@@ -97,6 +97,16 @@ class ChatParticipant:
 
 
 @dataclass(frozen=True, slots=True)
+class ParticipantAlias:
+    """A chat-scoped name that can resolve to a stable Telegram user ID."""
+
+    user_id: int
+    alias: str
+    source: str
+    confidence: int
+
+
+@dataclass(frozen=True, slots=True)
 class MediaDeliveryResult:
     """Outcome of handling the supported media URLs from one chat message."""
 
@@ -118,6 +128,7 @@ class ParticipantMemory:
     display_name: str
     username: str | None = None
     facts: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

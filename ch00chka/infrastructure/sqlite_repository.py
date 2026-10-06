@@ -11,9 +11,13 @@ import aiosqlite
 from ch00chka.domain import (
     ChatMessage,
     ChatParticipant,
+    ParticipantAlias,
     ParticipantMemory,
     SummarizableMessage,
     SummaryBatch,
+    normalize_participant_alias,
+    participant_identity_aliases,
+    unique_aliases,
 )
 
 
@@ -114,6 +118,20 @@ class SQLiteConversationRepository:
             )
             await db.execute(
                 """
+                CREATE TABLE IF NOT EXISTS participant_aliases (
+                    chat_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    alias TEXT NOT NULL,
+                    alias_key TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    confidence INTEGER NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (chat_id, user_id, alias_key)
+                )
+                """
+            )
+            await db.execute(
+                """
                 CREATE TABLE IF NOT EXISTS chat_features (
                     chat_id INTEGER NOT NULL,
                     feature TEXT NOT NULL,
@@ -156,6 +174,31 @@ class SQLiteConversationRepository:
                 ON participant_memories(chat_id, user_id)
                 """
             )
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_participant_aliases_chat_key
+                ON participant_aliases(chat_id, alias_key, confidence DESC)
+                """
+            )
+            async with db.execute(
+                """
+                SELECT chat_id, user_id, display_name, username
+                FROM chat_participants
+                """
+            ) as cursor:
+                existing_participants = await cursor.fetchall()
+            for chat_id, user_id, display_name, username in existing_participants:
+                await self._save_participant_aliases(
+                    db,
+                    chat_id=int(chat_id),
+                    user_id=int(user_id),
+                    aliases=participant_identity_aliases(
+                        str(display_name),
+                        str(username) if username else None,
+                    ),
+                    source="telegram",
+                    confidence=100,
+                )
             await db.commit()
 
     async def get_feature_overrides(self, chat_id: int) -> dict[str, bool]:
@@ -215,6 +258,7 @@ class SQLiteConversationRepository:
         normalized_name = display_name.strip() or f"User {user_id}"
         normalized_username = username.strip() if username else None
         async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
             await db.execute(
                 """
                 INSERT INTO chat_participants (
@@ -233,6 +277,17 @@ class SQLiteConversationRepository:
                     normalized_username,
                     time.time(),
                 ),
+            )
+            await self._save_participant_aliases(
+                db,
+                chat_id=chat_id,
+                user_id=user_id,
+                aliases=participant_identity_aliases(
+                    normalized_name,
+                    normalized_username,
+                ),
+                source="telegram",
+                confidence=100,
             )
             await db.commit()
 
@@ -257,6 +312,94 @@ class SQLiteConversationRepository:
             for user_id, display_name, username in rows
         )
 
+    async def list_participant_aliases(
+        self,
+        chat_id: int,
+    ) -> Sequence[ParticipantAlias]:
+        async with self._connection() as db:
+            async with db.execute(
+                """
+                SELECT user_id, alias, source, confidence
+                FROM participant_aliases
+                WHERE chat_id = ?
+                ORDER BY confidence DESC, updated_at DESC, alias_key ASC, user_id ASC
+                """,
+                (chat_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return tuple(
+            ParticipantAlias(
+                user_id=int(user_id),
+                alias=str(alias),
+                source=str(source),
+                confidence=int(confidence),
+            )
+            for user_id, alias, source, confidence in rows
+        )
+
+    async def save_participant_aliases(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        aliases: Sequence[str],
+        source: str,
+        confidence: int,
+    ) -> None:
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            await self._save_participant_aliases(
+                db,
+                chat_id=chat_id,
+                user_id=user_id,
+                aliases=aliases,
+                source=source,
+                confidence=confidence,
+            )
+            await db.commit()
+
+    @staticmethod
+    async def _save_participant_aliases(
+        db: aiosqlite.Connection,
+        *,
+        chat_id: int,
+        user_id: int,
+        aliases: Sequence[str],
+        source: str,
+        confidence: int,
+    ) -> None:
+        normalized_source = source.strip()[:32] or "manual"
+        normalized_confidence = max(0, min(int(confidence), 100))
+        for alias in unique_aliases(aliases):
+            alias_key = normalize_participant_alias(alias)
+            if not alias_key:
+                continue
+            await db.execute(
+                """
+                INSERT INTO participant_aliases (
+                    chat_id, user_id, alias, alias_key, source, confidence, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, user_id, alias_key) DO UPDATE SET
+                    alias = excluded.alias,
+                    source = CASE
+                        WHEN excluded.confidence >= participant_aliases.confidence
+                        THEN excluded.source ELSE participant_aliases.source
+                    END,
+                    confidence = MAX(participant_aliases.confidence, excluded.confidence),
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    chat_id,
+                    user_id,
+                    alias,
+                    alias_key,
+                    normalized_source,
+                    normalized_confidence,
+                    time.time(),
+                ),
+            )
+
     async def get_participant_memories(
         self,
         *,
@@ -280,16 +423,25 @@ class SQLiteConversationRepository:
             ) as cursor:
                 rows = await cursor.fetchall()
 
+        aliases = await self.list_participant_aliases(chat_id)
+        aliases_by_user: dict[int, list[str]] = {}
+        requested_set = set(ordered_ids)
+        for alias in aliases:
+            if alias.user_id in requested_set:
+                aliases_by_user.setdefault(alias.user_id, []).append(alias.alias)
+
         by_id: dict[int, ParticipantMemory] = {}
         for user_id, display_name, username, raw_facts in rows:
             facts = _decode_facts(raw_facts)
-            if not facts:
+            participant_aliases = tuple(aliases_by_user.get(int(user_id), ()))
+            if not facts and not participant_aliases:
                 continue
             by_id[int(user_id)] = ParticipantMemory(
                 user_id=int(user_id),
                 display_name=str(display_name),
                 username=str(username) if username else None,
                 facts=facts,
+                aliases=participant_aliases,
             )
         return tuple(by_id[user_id] for user_id in ordered_ids if user_id in by_id)
 

@@ -9,6 +9,7 @@ from .models import (
     MediaDeliveryResult,
     NormalizedMessage,
     ParticipantMemory,
+    ParticipantAlias,
     ParticipationDecision,
     ProcessingOptions,
     PlannedAction,
@@ -25,6 +26,12 @@ from .models import (
     SummarizableMessage,
     SummaryBatch,
 )
+from .identities import (
+    clean_participant_alias,
+    normalize_participant_alias,
+    participant_identity_aliases,
+    unique_aliases,
+)
 
 __all__ = [
     "ActionPlan",
@@ -33,10 +40,15 @@ __all__ = [
     "ChatMessage",
     "ChatFeature",
     "ChatParticipant",
+    "ParticipantAlias",
     "ConversationContext",
     "MediaDeliveryResult",
     "NormalizedMessage",
     "ParticipantMemory",
+    "clean_participant_alias",
+    "normalize_participant_alias",
+    "participant_identity_aliases",
+    "unique_aliases",
     "ParticipationDecision",
     "ProcessingOptions",
     "PlannedAction",

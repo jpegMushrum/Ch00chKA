@@ -30,7 +30,9 @@ from ch00chka.domain import (
 
 logger = logging.getLogger(__name__)
 FILTERED_REPLY_TEXT = "Filtered"
-_REVISABLE_VIOLATIONS = frozenset({"add_uncertainty_disclaimer"})
+_UNCERTAINTY_VIOLATIONS = frozenset(
+    {"add_uncertainty_disclaimer", "unsupported_factual_claim"}
+)
 
 
 def _filtered_reply_text(review: ReviewResult) -> str:
@@ -60,8 +62,6 @@ def _filtered_reply_text(review: ReviewResult) -> str:
         reason = "ответ раскрывает внутренние инструкции"
     elif "contradicts_research" in violations:
         reason = "ответ противоречит найденным данным"
-    elif "unsupported_factual_claim" in violations:
-        reason = "ответ уверенно утверждает то, что не удалось подтвердить"
     elif "add_uncertainty_disclaimer" in violations:
         reason = "ответу не хватило оговорки о неуверенности"
     else:
@@ -71,10 +71,25 @@ def _filtered_reply_text(review: ReviewResult) -> str:
 
 def _can_retry_review(review: ReviewResult) -> bool:
     return bool(
-        _REVISABLE_VIOLATIONS.intersection(
+        _UNCERTAINTY_VIOLATIONS.intersection(
             violation.casefold() for violation in review.violations
         )
     )
+
+
+def _is_uncertainty_only_review(review: ReviewResult) -> bool:
+    violations = {violation.casefold() for violation in review.violations}
+    return bool(violations) and violations.issubset(_UNCERTAINTY_VIOLATIONS)
+
+
+def _with_uncertainty_disclaimer(response):
+    """Never suppress a useful answer merely because it cannot be verified."""
+    text = response.text.strip()
+    if not text:
+        return response
+    if text[-1] not in ".!?…":
+        text += "."
+    return replace(response, text=f"{text} Но я могу ошибаться.")
 
 
 class EmptyActionPlanner:
@@ -260,15 +275,26 @@ class MessageProcessor:
                 if observer_enabled or response.incomplete:
                     review = await self._review(context, response)
                     if review.verdict is not ReviewVerdict.ACCEPT:
-                        self._log_rejection(message, response, review, research, decision)
-                        return await self._filtered_result(
-                            plan=plan,
-                            decision=decision,
-                            review=review,
-                            research=research,
-                            message=message,
-                            memory_enabled=options.memory_enabled,
-                        )
+                        if _is_uncertainty_only_review(review):
+                            response = _with_uncertainty_disclaimer(response)
+                            review = replace(
+                                review,
+                                verdict=ReviewVerdict.ACCEPT,
+                                violations=(
+                                    *review.violations,
+                                    "uncertainty_disclaimer_added",
+                                ),
+                            )
+                        else:
+                            self._log_rejection(message, response, review, research, decision)
+                            return await self._filtered_result(
+                                plan=plan,
+                                decision=decision,
+                                review=review,
+                                research=research,
+                                message=message,
+                                memory_enabled=options.memory_enabled,
+                            )
                 else:
                     review = ReviewResult(
                         verdict=ReviewVerdict.ACCEPT,

@@ -7,6 +7,7 @@ from typing import Any
 
 from aiogram import BaseMiddleware, types
 
+from ch00chka.application.identities import ParticipantIdentityRecorder
 from ch00chka.application.ports import ConversationRepository
 
 
@@ -61,8 +62,14 @@ class AdminStartGate(BaseMiddleware):
 
 
 class ParticipantTrackingMiddleware(BaseMiddleware):
-    def __init__(self, repository: ConversationRepository) -> None:
+    def __init__(
+        self,
+        repository: ConversationRepository,
+        *,
+        identity_recorder: ParticipantIdentityRecorder | None = None,
+    ) -> None:
         self._repository = repository
+        self._identity_recorder = identity_recorder
 
     async def __call__(
         self,
@@ -79,6 +86,25 @@ class ParticipantTrackingMiddleware(BaseMiddleware):
                     display_name=user.full_name,
                     username=user.username,
                 )
+                reply_user = (
+                    getattr(getattr(event, "reply_to_message", None), "from_user", None)
+                )
+                if reply_user and not reply_user.is_bot:
+                    await self._repository.upsert_participant(
+                        chat_id=event.chat.id,
+                        user_id=reply_user.id,
+                        display_name=reply_user.full_name,
+                        username=reply_user.username,
+                    )
+                if self._identity_recorder:
+                    await self._identity_recorder.observe(
+                        chat_id=event.chat.id,
+                        author_user_id=user.id,
+                        text=event.text or event.caption or "",
+                        reply_target_user_id=(
+                            reply_user.id if reply_user and not reply_user.is_bot else None
+                        ),
+                    )
             except Exception:
                 logger.exception(
                     "Could not update participant registry for chat %s",

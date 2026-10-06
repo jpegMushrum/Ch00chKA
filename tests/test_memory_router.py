@@ -6,6 +6,7 @@ from ch00chka.ai.memory_router import RepositoryMemoryRouter
 from ch00chka.domain import (
     ChatParticipant,
     NormalizedMessage,
+    ParticipantAlias,
     ParticipantMemory,
     ReferencedMessage,
 )
@@ -23,6 +24,16 @@ class FakeRepository:
             2: ParticipantMemory(2, "Roman", "roman", ("Играет в Create.",)),
             3: ParticipantMemory(3, "Alice Jones", "alice_j", ("Дизайнер.",)),
         }
+        self.aliases = (
+            ParticipantAlias(1, "Alice Smith", "telegram", 100),
+            ParticipantAlias(1, "alice", "telegram", 100),
+            ParticipantAlias(2, "Roman", "telegram", 100),
+            ParticipantAlias(2, "roman", "telegram", 100),
+            ParticipantAlias(2, "vassago", "telegram", 100),
+            ParticipantAlias(2, "Рома", "chat_relation", 75),
+            ParticipantAlias(3, "Alice Jones", "telegram", 100),
+            ParticipantAlias(3, "alice_j", "telegram", 100),
+        )
         self.requested_ids = ()
 
     async def list_participants(self, chat_id):
@@ -31,6 +42,9 @@ class FakeRepository:
     async def get_participant_memories(self, *, chat_id, user_ids):
         self.requested_ids = tuple(user_ids)
         return tuple(self.memories[user_id] for user_id in user_ids if user_id in self.memories)
+
+    async def list_participant_aliases(self, chat_id):
+        return self.aliases
 
 
 def make_message(**overrides) -> NormalizedMessage:
@@ -74,6 +88,15 @@ class RepositoryMemoryRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(route.participant_ids, (1, 2))
         self.assertEqual(repository.requested_ids, (1, 2))
+
+    async def test_routes_a_confirmed_historical_alias_to_its_user_id(self):
+        repository = FakeRepository()
+        router = RepositoryMemoryRouter(repository=repository, max_profiles=2)
+
+        route = await router.route(make_message(text="Кто такой Рома?"))
+
+        self.assertEqual(route.participant_ids, (1, 2))
+        self.assertEqual(route.memories[1].display_name, "Roman")
 
     async def test_does_not_guess_ambiguous_first_name(self):
         repository = FakeRepository()

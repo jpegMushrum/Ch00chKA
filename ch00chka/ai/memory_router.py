@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ch00chka.application.ports import ConversationRepository
-from ch00chka.domain import ChatParticipant, NormalizedMessage, ParticipantMemory
+from ch00chka.domain import (
+    ChatParticipant,
+    NormalizedMessage,
+    ParticipantAlias,
+    ParticipantMemory,
+    normalize_participant_alias,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +45,11 @@ class RepositoryMemoryRouter:
         *,
         mentioned_participant_ids: Sequence[int] = (),
     ) -> MemoryRoute:
-        participants = tuple(await self._repository.list_participants(message.chat_id))
+        participants, aliases = await asyncio.gather(
+            self._repository.list_participants(message.chat_id),
+            self._repository.list_participant_aliases(message.chat_id),
+        )
+        participants = tuple(participants)
         known_ids = {participant.user_id for participant in participants}
         selected: list[int] = []
 
@@ -59,7 +70,11 @@ class RepositoryMemoryRouter:
             add(reply.user_id)
         for user_id in mentioned_participant_ids:
             add(user_id)
-        for participant in _textually_mentioned_participants(message, participants):
+        for participant in _textually_mentioned_participants(
+            message,
+            participants,
+            aliases,
+        ):
             add(participant.user_id)
 
         stored_memories = await self._repository.get_participant_memories(
@@ -80,6 +95,7 @@ class RepositoryMemoryRouter:
 def _textually_mentioned_participants(
     message: NormalizedMessage,
     participants: Sequence[ChatParticipant],
+    aliases: Sequence[ParticipantAlias],
 ) -> tuple[ChatParticipant, ...]:
     text = "\n".join(
         part for part in (message.text, message.quoted_text or "") if part
@@ -87,41 +103,28 @@ def _textually_mentioned_participants(
     if not text:
         return ()
 
-    first_name_counts: dict[str, int] = {}
-    for participant in participants:
-        first_name = _first_name(participant.display_name)
-        if first_name:
-            first_name_counts[first_name] = first_name_counts.get(first_name, 0) + 1
+    participants_by_id = {participant.user_id: participant for participant in participants}
+    owners_by_alias: dict[str, set[int]] = {}
+    for alias in aliases:
+        if alias.confidence < 70 or alias.user_id not in participants_by_id:
+            continue
+        key = normalize_participant_alias(alias.alias)
+        if key:
+            owners_by_alias.setdefault(key, set()).add(alias.user_id)
 
-    matched: list[ChatParticipant] = []
-    for participant in participants:
-        names = [_normalise_name(participant.display_name)]
-        first_name = _first_name(participant.display_name)
-        if first_name and first_name_counts.get(first_name) == 1:
-            names.append(first_name)
-        username = (participant.username or "").strip().casefold()
-        if username:
-            names.append(f"@{username}")
-            names.append(username)
-        if any(_contains_name(text, name) for name in names if name):
-            matched.append(participant)
-    return tuple(matched)
-
-
-def _normalise_name(value: str) -> str:
-    return " ".join(value.casefold().split())
-
-
-def _first_name(value: str) -> str:
-    parts = _normalise_name(value).split(" ", maxsplit=1)
-    if not parts or not parts[0]:
-        return ""
-    first = parts[0]
-    return first if len(first) >= 3 else ""
+    matched_ids: set[int] = set()
+    for alias, user_ids in owners_by_alias.items():
+        if len(user_ids) == 1 and _contains_name(text, alias):
+            matched_ids.update(user_ids)
+    return tuple(
+        participant
+        for participant in participants
+        if participant.user_id in matched_ids
+    )
 
 
 def _contains_name(text: str, name: str) -> bool:
-    return bool(re.search(rf"(?<![\w@]){re.escape(name)}(?!\w)", text))
+    return bool(re.search(rf"(?<!\w)@?{re.escape(name)}(?!\w)", text))
 
 
 def _compact_memory(
@@ -148,4 +151,5 @@ def _compact_memory(
         display_name=memory.display_name,
         username=memory.username,
         facts=tuple(facts),
+        aliases=memory.aliases[:8],
     )

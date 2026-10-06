@@ -14,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ch00chka.ai.aliases import BotAliasRegistry, LLMAliasGenerator, sanitize_aliases
 from ch00chka.application import ChatFeatureService, MessageProcessor
+from ch00chka.application.identities import ParticipantIdentityRecorder
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import (
     ActionType,
@@ -270,7 +271,12 @@ def create_router(
     router = Router(name="group_messages")
     start_gate = AdminStartGate(admin_id)
     router.message.outer_middleware(start_gate)
-    router.message.middleware(ParticipantTrackingMiddleware(repository))
+    router.message.middleware(
+        ParticipantTrackingMiddleware(
+            repository,
+            identity_recorder=ParticipantIdentityRecorder(repository=repository),
+        )
+    )
     media_adapter = media or NoopMediaAdapter()
     bot_identity: types.User | None = None
 

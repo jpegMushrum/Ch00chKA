@@ -404,6 +404,62 @@ class MessageProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(actor.calls), 2)
         self.assertEqual(observer.calls, 2)
 
+    async def test_unsupported_claim_is_revised_not_filtered(self):
+        repository = FakeRepository()
+        actor = ScriptedActor(
+            ["Это точно так.", "Наверное, так, но могу ошибаться."]
+        )
+        observer = ScriptedObserver(
+            [
+                ReviewResult(
+                    ReviewVerdict.BLOCK,
+                    violations=("unsupported_factual_claim",),
+                ),
+                ReviewResult(ReviewVerdict.ACCEPT),
+            ]
+        )
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=observer,
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertEqual(result.reply_text, "Наверное, так, но могу ошибаться.")
+        self.assertEqual(len(actor.calls), 2)
+        self.assertEqual(observer.calls, 2)
+
+    async def test_repeated_uncertainty_review_adds_disclaimer_instead_of_filtering(self):
+        repository = FakeRepository()
+        actor = ScriptedActor(["Это точно так.", "Похоже, это так"])
+        observer = ScriptedObserver(
+            [
+                ReviewResult(
+                    ReviewVerdict.REVISE,
+                    violations=("add_uncertainty_disclaimer",),
+                ),
+                ReviewResult(
+                    ReviewVerdict.BLOCK,
+                    violations=("unsupported_factual_claim",),
+                ),
+            ]
+        )
+        processor = MessageProcessor(
+            repository=repository,
+            participation=FakeParticipation(True),
+            context_builder=FakeContextBuilder(),
+            actor=actor,
+            observer=observer,
+        )
+
+        result = await processor.process(MESSAGE)
+
+        self.assertEqual(result.reply_text, "Похоже, это так. Но я могу ошибаться.")
+        self.assertEqual(result.review.verdict, ReviewVerdict.ACCEPT)
+
     async def test_truncated_response_is_revised_even_when_observer_is_disabled(self):
         repository = FakeRepository()
         actor = ScriptedActor(

@@ -81,6 +81,49 @@ class RepositoryAliasTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(chat_200), 1)
             self.assertEqual(chat_200[0].user_id, 2)
 
+            aliases = await repository.list_participant_aliases(100)
+            self.assertEqual(
+                {(alias.user_id, alias.alias) for alias in aliases},
+                {(1, "Alice"), (1, "Alice Updated")},
+            )
+
+    async def test_participant_aliases_are_scoped_and_can_be_added_from_chat_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SQLiteConversationRepository(
+                db_path=str(Path(directory) / "memory.db"),
+                default_personality="По умолчанию",
+            )
+            await repository.initialize()
+            await repository.upsert_participant(
+                chat_id=100,
+                user_id=1,
+                display_name="vassago",
+                username="vassago",
+            )
+            await repository.save_participant_aliases(
+                chat_id=100,
+                user_id=1,
+                aliases=("Рома",),
+                source="chat_relation",
+                confidence=75,
+            )
+            await repository.save_participant_aliases(
+                chat_id=200,
+                user_id=1,
+                aliases=("Другой Рома",),
+                source="self_intro",
+                confidence=95,
+            )
+
+            aliases = await repository.list_participant_aliases(100)
+            other_aliases = await repository.list_participant_aliases(200)
+
+            self.assertIn(("Рома", "chat_relation", 75), {
+                (alias.alias, alias.source, alias.confidence) for alias in aliases
+            })
+            self.assertNotIn("Другой Рома", {alias.alias for alias in aliases})
+            self.assertIn("Другой Рома", {alias.alias for alias in other_aliases})
+
     async def test_participant_memories_are_separate_and_scoped_to_the_chat(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteConversationRepository(
@@ -125,7 +168,9 @@ class RepositoryAliasTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual([memory.user_id for memory in memories], [2, 1])
             self.assertEqual(memories[0].facts, ("Работает дизайнером.",))
-            self.assertEqual(other_chat, ())
+            self.assertEqual([memory.user_id for memory in other_chat], [1])
+            self.assertEqual(other_chat[0].facts, ())
+            self.assertIn("Alice elsewhere", other_chat[0].aliases)
 
     async def test_existing_chat_meta_table_is_migrated(self):
         with tempfile.TemporaryDirectory() as directory:
