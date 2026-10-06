@@ -10,6 +10,7 @@ try:
     from ch00chka.presentation.telegram.router import (
         _extract_urls,
         _features_keyboard,
+        _media_urls_for_features,
         _parse_alias_seeds,
         _participant_from_add_command,
         _participant_mention_chunks,
@@ -21,6 +22,7 @@ except ModuleNotFoundError:
     MessageEntityType = None
     _extract_urls = None
     _features_keyboard = None
+    _media_urls_for_features = None
     _parse_alias_seeds = None
     _participant_from_add_command = None
     _participant_mention_chunks = None
@@ -60,6 +62,28 @@ class RouterHelperTests(unittest.TestCase):
                 supported_media_urls=urls,
             )
         )
+
+    def test_supported_media_links_are_separated_before_ai_processing(self):
+        states = {feature: True for feature in ChatFeature}
+        urls = (
+            "https://youtu.be/example",
+            "https://example.com/ordinary-link",
+            "https://www.tiktok.com/@creator/video/123",
+        )
+
+        supported, enabled = _media_urls_for_features(urls, states)
+
+        self.assertEqual(
+            supported,
+            ("https://youtu.be/example", "https://www.tiktok.com/@creator/video/123"),
+        )
+        self.assertEqual(enabled, supported)
+
+        states[ChatFeature.TIKTOK] = False
+        supported, enabled = _media_urls_for_features(urls, states)
+
+        self.assertEqual(enabled, ("https://youtu.be/example",))
+        self.assertEqual(len(supported), 2)
 
     def test_alias_seeds_are_parsed_from_command(self):
         self.assertEqual(

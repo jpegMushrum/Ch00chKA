@@ -17,7 +17,6 @@ from ch00chka.application import ChatFeatureService, MessageProcessor
 from ch00chka.application.identities import ParticipantIdentityRecorder
 from ch00chka.application.ports import ConversationRepository
 from ch00chka.domain import (
-    ActionType,
     ChatFeature,
     ChatParticipant,
     MediaDeliveryResult,
@@ -256,6 +255,20 @@ def _will_delete_source_message(
         and feature_states[ChatFeature.DELETE_SOURCE_LINKS]
         and len(media_urls) == len(supported_media_urls)
     )
+
+
+def _media_urls_for_features(
+    urls: tuple[str, ...],
+    feature_states: dict[ChatFeature, bool],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return recognized links and the subset whose downloader is enabled."""
+    supported_urls = tuple(url for url in urls if detect_media_platform(url) is not None)
+    enabled_urls = tuple(
+        url
+        for url in supported_urls
+        if feature_states[_MEDIA_FEATURES[detect_media_platform(url)]]
+    )
+    return supported_urls, enabled_urls
 
 
 def create_router(
@@ -513,45 +526,21 @@ def create_router(
             ),
         )
 
-        result = None
-        try:
-            result = await processor.process(
-                normalized,
-                options=feature_service.processing_options(feature_states),
-            )
-        except Exception:
-            logger.exception("Failed to process message %s", message.message_id)
-            if normalized.is_reply_to_bot or normalized.mentions_bot:
-                await message.reply("Не получилось сформировать ответ. Попробуй ещё раз чуть позже.")
-
-        supported_media_urls = tuple(
-            str(action.payload["url"])
-            for action in (result.plan.actions if result else ())
-            if action.type is ActionType.MEDIA_DOWNLOAD
-            and action.payload.get("url")
-            and (
-                (platform := detect_media_platform(str(action.payload["url"])))
-                is not None
-            )
-        )
-        media_urls = tuple(
-            url
-            for url in supported_media_urls
-            if (platform := detect_media_platform(url)) is not None
-            and feature_states[_MEDIA_FEATURES[platform]]
+        supported_media_urls, media_urls = _media_urls_for_features(
+            normalized.urls,
+            feature_states,
         )
         delete_source_when_delivered = _will_delete_source_message(
             feature_states,
             media_urls=media_urls,
             supported_media_urls=supported_media_urls,
         )
-        if result and result.reply_text:
-            await _reply_actor_text(
-                message,
-                result.reply_text,
-                reply_to_source=not delete_source_when_delivered,
-            )
-        if media_urls:
+        if supported_media_urls:
+            # A supported link is a media command, not conversational context.
+            # Handle it before participation, memory, research, or actor calls so
+            # reposting a video never spends DeepSeek tokens or triggers a reply.
+            if not media_urls:
+                return
             try:
                 delivery = await media_adapter.handle(
                     message,
@@ -563,5 +552,20 @@ def create_router(
             except Exception:
                 logger.exception("Media adapter failed for message %s", message.message_id)
                 await message.reply("Не получилось обработать ссылку на медиа.")
+            return
+
+        try:
+            result = await processor.process(
+                normalized,
+                options=feature_service.processing_options(feature_states),
+            )
+        except Exception:
+            logger.exception("Failed to process message %s", message.message_id)
+            if normalized.is_reply_to_bot or normalized.mentions_bot:
+                await message.reply("Не получилось сформировать ответ. Попробуй ещё раз чуть позже.")
+            return
+
+        if result.reply_text:
+            await _reply_actor_text(message, result.reply_text)
 
     return router
