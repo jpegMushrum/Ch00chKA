@@ -39,6 +39,7 @@ class ChatFeature(StrEnum):
     TIKTOK = "tiktok"
     INSTAGRAM = "instagram"
     MENTIONS = "mentions"
+    DELETE_SOURCE_LINKS = "delete_source_links"
 
 
 class ResearchSource(StrEnum):
@@ -93,6 +94,20 @@ class ChatParticipant:
     user_id: int
     display_name: str
     username: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MediaDeliveryResult:
+    """Outcome of handling the supported media URLs from one chat message."""
+
+    requested_urls: tuple[str, ...]
+    delivered_urls: tuple[str, ...]
+
+    @property
+    def all_delivered(self) -> bool:
+        return bool(self.requested_urls) and (
+            len(self.delivered_urls) == len(self.requested_urls)
+        )
 
 
 @dataclass(frozen=True, slots=True)

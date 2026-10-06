@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +19,7 @@ from aiogram import types
 from aiogram.types import FSInputFile
 from yt_dlp.utils import DownloadError
 
+from ch00chka.domain import MediaDeliveryResult
 from ch00chka.integrations.media_urls import MediaPlatform, detect_media_platform
 
 
@@ -58,6 +60,7 @@ class DownloadedMedia:
 _PHOTO_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _VIDEO_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".webm"})
 _MAX_MEDIA_GROUP_ITEMS = 10
+_DEFAULT_MAX_MEDIA_ITEMS = 50
 _GALLERY_DL_LOG_LIMIT = 4_000
 _SENSITIVE_HEADER = re.compile(
     r"(?im)^(?:cookie|set-cookie|authorization|proxy-authorization)\s*:\s*.*$"
@@ -112,14 +115,20 @@ class YtDlpMediaDownloader:
         max_bytes: int,
         max_duration_seconds: int,
         max_concurrent_downloads: int,
+        max_items: int = _DEFAULT_MAX_MEDIA_ITEMS,
         proxy_url: str | None = None,
         cookies_file: str | None = None,
         cookies_files: Mapping[MediaPlatform, str] | None = None,
+        cookie_jar_dir: str | None = None,
+        reset_cookie_jars: bool = False,
     ) -> None:
         self._temp_dir = Path(temp_dir).resolve()
         self._cache_dir = self._temp_dir / "cache"
         self._max_bytes = max_bytes
         self._max_duration_seconds = max_duration_seconds
+        if max_items < 1:
+            raise ValueError("max_items must be positive")
+        self._max_items = max_items
         self._proxy_url = proxy_url
         self._cookies_file = cookies_file
         self._cookies_files = {
@@ -127,6 +136,17 @@ class YtDlpMediaDownloader:
             for platform, path in (cookies_files or {}).items()
             if path and path.strip()
         }
+        self._cookie_jar_dir = (
+            Path(cookie_jar_dir).resolve() if cookie_jar_dir and cookie_jar_dir.strip() else None
+        )
+        self._cookie_locks = {
+            platform: threading.Lock() for platform in MediaPlatform
+        }
+        # A reset is consumed after its first successful seed in this process;
+        # concurrent downloads must never replace the same platform jar together.
+        self._cookie_jars_to_reset = (
+            set(MediaPlatform) if reset_cookie_jars else set()
+        )
         self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +171,17 @@ class YtDlpMediaDownloader:
             shutil.rmtree(work_dir, ignore_errors=True)
 
     def _download_sync(
+        self,
+        url: str,
+        platform: MediaPlatform,
+        work_dir: Path,
+    ) -> DownloadedMedia:
+        # yt-dlp saves cookies as it closes. Serializing one platform prevents
+        # two downloads from corrupting its persistent Netscape cookie jar.
+        with self._cookie_locks[platform]:
+            return self._download_sync_locked(url, platform, work_dir)
+
+    def _download_sync_locked(
         self,
         url: str,
         platform: MediaPlatform,
@@ -187,7 +218,7 @@ class YtDlpMediaDownloader:
             # Instagram posts and TikTok photo mode are exposed as playlists by
             # their extractors. A YouTube playlist should still mean one video.
             "noplaylist": not supports_gallery,
-            "playlistend": _MAX_MEDIA_GROUP_ITEMS if supports_gallery else 1,
+            "playlistend": self._max_items if supports_gallery else 1,
             "max_filesize": self._max_bytes,
             "match_filter": match_filter,
             "socket_timeout": 30,
@@ -206,12 +237,9 @@ class YtDlpMediaDownloader:
         }
         if self._proxy_url:
             options["proxy"] = self._proxy_url
-        cookies_file = self._cookies_files.get(platform) or self._cookies_file
+        cookies_file = self._cookie_file_for_platform(platform, work_dir)
         if cookies_file:
-            options["cookiefile"] = self._temporary_cookie_file(
-                cookies_file,
-                work_dir,
-            )
+            options["cookiefile"] = cookies_file
 
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
@@ -227,6 +255,7 @@ class YtDlpMediaDownloader:
                     platform=platform,
                     work_dir=work_dir,
                     original_error=exc,
+                    cookies_file=cookies_file,
                 )
             raise MediaDownloadError(str(exc)) from exc
 
@@ -253,6 +282,7 @@ class YtDlpMediaDownloader:
                     url=url,
                     platform=platform,
                     work_dir=work_dir,
+                    cookies_file=cookies_file,
                 )
             raise MediaDownloadError("yt-dlp did not create a media file")
 
@@ -277,6 +307,7 @@ class YtDlpMediaDownloader:
         platform: MediaPlatform,
         work_dir: Path,
         original_error: Exception | None = None,
+        cookies_file: str | None = None,
     ) -> DownloadedMedia:
         """Download image posts when yt-dlp cannot expose their image URLs."""
         command = [
@@ -288,7 +319,7 @@ class YtDlpMediaDownloader:
             "--filename",
             "media_{num:>03}.{extension}",
             "--range",
-            f"1-{_MAX_MEDIA_GROUP_ITEMS}",
+            f"1-{self._max_items}",
             "--filesize-max",
             str(self._max_bytes),
             "-o",
@@ -308,7 +339,6 @@ class YtDlpMediaDownloader:
         ]
         if self._proxy_url:
             command.extend(("-o", f"extractor.proxy={self._proxy_url}"))
-        cookies_file = self._cookies_files.get(platform) or self._cookies_file
         if cookies_file:
             command.extend(("--cookies", cookies_file))
         command.append(url)
@@ -375,9 +405,49 @@ class YtDlpMediaDownloader:
             key=lambda item: str(item.relative_to(work_dir)),
         )
 
+    def _cookie_file_for_platform(
+        self,
+        platform: MediaPlatform,
+        work_dir: Path,
+    ) -> str | None:
+        source = self._cookies_files.get(platform) or self._cookies_file
+        if self._cookie_jar_dir is None:
+            return self._temporary_cookie_file(source, work_dir) if source else None
+
+        destination = self._cookie_jar_dir / f"{platform.value}-cookies.txt"
+        needs_reset = platform in self._cookie_jars_to_reset
+        if destination.is_file() and not needs_reset:
+            return str(destination)
+        if not source:
+            if destination.is_file():
+                logger.warning(
+                    "Cookie jar reset skipped for %s: no source export is configured",
+                    platform,
+                )
+                return str(destination)
+            return None
+
+        self._seed_cookie_jar(source, destination)
+        self._cookie_jars_to_reset.discard(platform)
+        logger.info("Cookie jar initialized for %s", platform)
+        return str(destination)
+
+    @staticmethod
+    def _seed_cookie_jar(source: str, destination: Path) -> None:
+        """Atomically seed a writable persistent jar from a read-only export."""
+        staging = destination.with_suffix(f"{destination.suffix}.new")
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, staging)
+            staging.chmod(0o600)
+            staging.replace(destination)
+        except OSError as exc:
+            staging.unlink(missing_ok=True)
+            raise MediaDownloadError("Could not prepare media cookies") from exc
+
     @staticmethod
     def _temporary_cookie_file(source: str, work_dir: Path) -> str:
-        """Give yt-dlp a writable copy; Compose mounts the source as read-only."""
+        """Compatibility fallback when persistent cookie jars are disabled."""
         destination = work_dir / ".cookies" / "cookies.txt"
         try:
             destination.parent.mkdir(exist_ok=True)
@@ -397,7 +467,14 @@ class YtDlpMediaAdapter:
         self._downloader = downloader
         self._upload_chunk_size = upload_chunk_size
 
-    async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None:
+    async def handle(
+        self,
+        message: types.Message,
+        urls: tuple[str, ...],
+        *,
+        reply_to_source: bool = True,
+    ) -> MediaDeliveryResult:
+        delivered_urls: list[str] = []
         for url in urls:
             platform = detect_media_platform(url)
             if platform is None:
@@ -405,75 +482,138 @@ class YtDlpMediaAdapter:
 
             try:
                 async with self._downloader.download(url) as media:
-                    await self._send_media(message, media)
+                    await self._send_media(
+                        message,
+                        media,
+                        reply_to_source=reply_to_source,
+                    )
+                delivered_urls.append(url)
             except MediaTooLongError:
-                await message.reply("Видео слишком длинное для загрузки.")
+                await self._send_status(
+                    message,
+                    "Видео слишком длинное для загрузки.",
+                    reply_to_source=reply_to_source,
+                )
             except MediaTooLargeError:
-                await message.reply("Контент получился слишком большим для Telegram.")
+                await self._send_status(
+                    message,
+                    "Контент получился слишком большим для Telegram.",
+                    reply_to_source=reply_to_source,
+                )
             except MediaDownloadError as exc:
                 logger.warning("Could not download %s media: %s", platform, exc)
                 if platform is MediaPlatform.TIKTOK:
-                    await message.reply(
+                    await self._send_status(
+                        message,
                         "TikTok не отдал медиа загрузчику. Оно может быть "
-                        "приватным, удалённым или временно защищённым проверкой."
+                        "приватным, удалённым или временно защищённым проверкой.",
+                        reply_to_source=reply_to_source,
                     )
                 else:
-                    await message.reply(
+                    await self._send_status(
+                        message,
                         "Не получилось скачать этот контент без авторизации. "
-                        "Возможно, оно приватное или платформа ограничила доступ."
+                        "Возможно, оно приватное или платформа ограничила доступ.",
+                        reply_to_source=reply_to_source,
                     )
             except Exception:
                 logger.exception("Could not send %s media", platform)
-                await message.reply("Не получилось обработать или отправить медиа.")
+                await self._send_status(
+                    message,
+                    "Не получилось обработать или отправить медиа.",
+                    reply_to_source=reply_to_source,
+                )
+        return MediaDeliveryResult(
+            requested_urls=urls,
+            delivered_urls=tuple(delivered_urls),
+        )
 
     async def _send_media(
         self,
         message: types.Message,
         media: DownloadedMedia,
+        *,
+        reply_to_source: bool = True,
     ) -> None:
-        """Reply with one file or albums of up to Telegram's ten-item limit."""
+        """Send one file or albums of up to Telegram's ten-item limit."""
         pending_album: list[DownloadedMediaItem] = []
         for item in media.items:
             if item.kind is MediaKind.DOCUMENT:
-                await self._send_album_or_item(message, pending_album)
+                await self._send_album_or_item(
+                    message,
+                    pending_album,
+                    reply_to_source=reply_to_source,
+                )
                 pending_album.clear()
-                await self._send_item(message, item)
+                await self._send_item(
+                    message,
+                    item,
+                    reply_to_source=reply_to_source,
+                )
                 continue
 
             pending_album.append(item)
             if len(pending_album) == _MAX_MEDIA_GROUP_ITEMS:
-                await self._send_album_or_item(message, pending_album)
+                await self._send_album_or_item(
+                    message,
+                    pending_album,
+                    reply_to_source=reply_to_source,
+                )
                 pending_album.clear()
 
-        await self._send_album_or_item(message, pending_album)
+        await self._send_album_or_item(
+            message,
+            pending_album,
+            reply_to_source=reply_to_source,
+        )
 
     async def _send_album_or_item(
         self,
         message: types.Message,
         items: list[DownloadedMediaItem],
+        *,
+        reply_to_source: bool,
     ) -> None:
         if not items:
             return
         if len(items) == 1:
-            await self._send_item(message, items[0])
+            await self._send_item(
+                message,
+                items[0],
+                reply_to_source=reply_to_source,
+            )
             return
 
-        await message.reply_media_group(
-            media=[self._to_input_media(item) for item in items]
-        )
+        send = message.reply_media_group if reply_to_source else message.answer_media_group
+        await send(media=[self._to_input_media(item) for item in items])
 
     async def _send_item(
         self,
         message: types.Message,
         item: DownloadedMediaItem,
+        *,
+        reply_to_source: bool,
     ) -> None:
         source = FSInputFile(item.path, chunk_size=self._upload_chunk_size)
         if item.kind is MediaKind.PHOTO:
-            await message.reply_photo(photo=source)
+            send = message.reply_photo if reply_to_source else message.answer_photo
+            await send(photo=source)
         elif item.kind is MediaKind.VIDEO:
-            await message.reply_video(video=source)
+            send = message.reply_video if reply_to_source else message.answer_video
+            await send(video=source)
         else:
-            await message.reply_document(document=source)
+            send = message.reply_document if reply_to_source else message.answer_document
+            await send(document=source)
+
+    @staticmethod
+    async def _send_status(
+        message: types.Message,
+        text: str,
+        *,
+        reply_to_source: bool,
+    ) -> None:
+        send = message.reply if reply_to_source else message.answer
+        await send(text)
 
     def _to_input_media(
         self,

@@ -8,7 +8,7 @@ from typing import Protocol
 
 from aiogram import Bot, F, Router, types
 from aiogram.enums import ChatMemberStatus, MessageEntityType, ParseMode
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -19,6 +19,7 @@ from ch00chka.domain import (
     ActionType,
     ChatFeature,
     ChatParticipant,
+    MediaDeliveryResult,
     NormalizedMessage,
     ReferencedMessage,
 )
@@ -41,6 +42,7 @@ _FEATURE_LABELS: tuple[tuple[ChatFeature, str], ...] = (
     (ChatFeature.TIKTOK, "TikTok"),
     (ChatFeature.INSTAGRAM, "Instagram"),
     (ChatFeature.MENTIONS, "/all"),
+    (ChatFeature.DELETE_SOURCE_LINKS, "Удалять ссылки"),
 )
 _MEDIA_FEATURES = {
     MediaPlatform.YOUTUBE: ChatFeature.YOUTUBE,
@@ -50,12 +52,24 @@ _MEDIA_FEATURES = {
 
 
 class MediaAdapter(Protocol):
-    async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None: ...
+    async def handle(
+        self,
+        message: types.Message,
+        urls: tuple[str, ...],
+        *,
+        reply_to_source: bool = True,
+    ) -> MediaDeliveryResult: ...
 
 
 class NoopMediaAdapter:
-    async def handle(self, message: types.Message, urls: tuple[str, ...]) -> None:
-        return None
+    async def handle(
+        self,
+        message: types.Message,
+        urls: tuple[str, ...],
+        *,
+        reply_to_source: bool = True,
+    ) -> MediaDeliveryResult:
+        return MediaDeliveryResult(requested_urls=urls, delivered_urls=())
 
 
 def _features_keyboard(states: dict[ChatFeature, bool]):
@@ -193,16 +207,54 @@ def _reference_text(message: types.Message, *, limit: int = 2_000) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-async def _reply_actor_text(message: types.Message, text: str) -> None:
+async def _reply_actor_text(
+    message: types.Message,
+    text: str,
+    *,
+    reply_to_source: bool = True,
+) -> None:
     rendered = markdown_to_telegram_html(text)
+    send = message.reply if reply_to_source else message.answer
     try:
-        await message.reply(rendered, parse_mode=ParseMode.HTML)
+        await send(rendered, parse_mode=ParseMode.HTML)
     except TelegramBadRequest:
         logger.warning(
             "Telegram rejected formatted actor response for message %s; using plain text",
             message.message_id,
         )
-        await message.reply(text)
+        await send(text)
+
+
+async def _delete_source_message(message: types.Message) -> None:
+    try:
+        await message.delete()
+    except TelegramAPIError as exc:
+        logger.warning(
+            "Could not delete source media message %s in chat %s: %s",
+            message.message_id,
+            message.chat.id,
+            exc,
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error deleting source media message %s in chat %s",
+            message.message_id,
+            message.chat.id,
+        )
+
+
+def _will_delete_source_message(
+    feature_states: dict[ChatFeature, bool],
+    *,
+    media_urls: tuple[str, ...],
+    supported_media_urls: tuple[str, ...],
+) -> bool:
+    """Decide before sending, because Telegram replies cannot be detached later."""
+    return bool(
+        media_urls
+        and feature_states[ChatFeature.DELETE_SOURCE_LINKS]
+        and len(media_urls) == len(supported_media_urls)
+    )
 
 
 def create_router(
@@ -461,14 +513,12 @@ def create_router(
                 normalized,
                 options=feature_service.processing_options(feature_states),
             )
-            if result.reply_text:
-                await _reply_actor_text(message, result.reply_text)
         except Exception:
             logger.exception("Failed to process message %s", message.message_id)
             if normalized.is_reply_to_bot or normalized.mentions_bot:
                 await message.reply("Не получилось сформировать ответ. Попробуй ещё раз чуть позже.")
 
-        media_urls = tuple(
+        supported_media_urls = tuple(
             str(action.payload["url"])
             for action in (result.plan.actions if result else ())
             if action.type is ActionType.MEDIA_DOWNLOAD
@@ -477,11 +527,33 @@ def create_router(
                 (platform := detect_media_platform(str(action.payload["url"])))
                 is not None
             )
+        )
+        media_urls = tuple(
+            url
+            for url in supported_media_urls
+            if (platform := detect_media_platform(url)) is not None
             and feature_states[_MEDIA_FEATURES[platform]]
         )
+        delete_source_when_delivered = _will_delete_source_message(
+            feature_states,
+            media_urls=media_urls,
+            supported_media_urls=supported_media_urls,
+        )
+        if result and result.reply_text:
+            await _reply_actor_text(
+                message,
+                result.reply_text,
+                reply_to_source=not delete_source_when_delivered,
+            )
         if media_urls:
             try:
-                await media_adapter.handle(message, media_urls)
+                delivery = await media_adapter.handle(
+                    message,
+                    media_urls,
+                    reply_to_source=not delete_source_when_delivered,
+                )
+                if delete_source_when_delivered and delivery.all_delivered:
+                    await _delete_source_message(message)
             except Exception:
                 logger.exception("Media adapter failed for message %s", message.message_id)
                 await message.reply("Не получилось обработать ссылку на медиа.")

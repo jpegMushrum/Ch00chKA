@@ -132,6 +132,7 @@ def build_application(settings: Settings) -> Application:
             ChatFeature.TIKTOK: True,
             ChatFeature.INSTAGRAM: True,
             ChatFeature.MENTIONS: True,
+            ChatFeature.DELETE_SOURCE_LINKS: False,
         },
     )
     media_downloader = YtDlpMediaDownloader(
@@ -139,6 +140,7 @@ def build_application(settings: Settings) -> Application:
         max_bytes=settings.effective_media_max_bytes,
         max_duration_seconds=settings.effective_media_max_duration_seconds,
         max_concurrent_downloads=settings.media_max_concurrent_downloads,
+        max_items=settings.media_max_items,
         proxy_url=(
             settings.media_proxy_url.get_secret_value()
             if settings.media_proxy_url
@@ -150,6 +152,8 @@ def build_application(settings: Settings) -> Application:
             MediaPlatform.TIKTOK: settings.media_tiktok_cookies_file,
             MediaPlatform.INSTAGRAM: settings.media_instagram_cookies_file,
         },
+        cookie_jar_dir=settings.media_cookie_jar_dir,
+        reset_cookie_jars=settings.media_cookie_jar_reset,
     )
     router = create_router(
         processor=processor,

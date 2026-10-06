@@ -36,7 +36,8 @@ class ChatFeatureServiceTests(unittest.IsolatedAsyncioTestCase):
         self.service = ChatFeatureService(
             repository=self.repository,
             defaults={
-                feature: feature is not ChatFeature.RESEARCH
+                feature: feature
+                not in {ChatFeature.RESEARCH, ChatFeature.DELETE_SOURCE_LINKS}
                 for feature in ChatFeature
             },
         )
@@ -46,6 +47,7 @@ class ChatFeatureServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(first[ChatFeature.AI_RESPONSES])
         self.assertFalse(first[ChatFeature.RESEARCH])
+        self.assertFalse(first[ChatFeature.DELETE_SOURCE_LINKS])
 
         self.assertFalse(await self.service.toggle(100, ChatFeature.AI_RESPONSES))
         first = await self.service.states(100)

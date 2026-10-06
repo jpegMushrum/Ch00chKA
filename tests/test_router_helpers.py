@@ -13,6 +13,7 @@ try:
         _parse_alias_seeds,
         _participant_from_add_command,
         _participant_mention_chunks,
+        _will_delete_source_message,
     )
 except ModuleNotFoundError:
     ChatFeature = None
@@ -23,6 +24,7 @@ except ModuleNotFoundError:
     _parse_alias_seeds = None
     _participant_from_add_command = None
     _participant_mention_chunks = None
+    _will_delete_source_message = None
 
 
 @unittest.skipIf(_parse_alias_seeds is None, "aiogram is not installed in this test runtime")
@@ -38,6 +40,26 @@ class RouterHelperTests(unittest.TestCase):
         self.assertEqual(len(buttons), len(ChatFeature))
         self.assertEqual(by_callback["feature:ai_responses"], "Ответы ИИ: ON")
         self.assertEqual(by_callback["feature:research"], "Поиск в интернете: OFF")
+        self.assertEqual(by_callback["feature:delete_source_links"], "Удалять ссылки: ON")
+
+    def test_delete_source_is_planned_only_when_all_links_are_enabled(self):
+        states = {feature: True for feature in ChatFeature}
+        urls = ("https://youtu.be/example",)
+
+        self.assertTrue(
+            _will_delete_source_message(
+                states,
+                media_urls=urls,
+                supported_media_urls=urls,
+            )
+        )
+        self.assertFalse(
+            _will_delete_source_message(
+                states,
+                media_urls=(),
+                supported_media_urls=urls,
+            )
+        )
 
     def test_alias_seeds_are_parsed_from_command(self):
         self.assertEqual(

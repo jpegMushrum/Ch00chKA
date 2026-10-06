@@ -46,12 +46,16 @@ class Settings(BaseSettings):
     media_max_bytes: int = Field(default=48_000_000, gt=0)
     media_max_duration_seconds: int = Field(default=600, gt=0)
     media_max_concurrent_downloads: int = Field(default=2, gt=0)
+    media_max_items: int = Field(default=50, ge=1, le=100)
     media_proxy_url: SecretStr | None = None
     # Legacy fallback for a combined Netscape cookie jar.
     media_cookies_file: str = ""
     media_youtube_cookies_file: str = ""
     media_tiktok_cookies_file: str = ""
     media_instagram_cookies_file: str = ""
+    # Writable persistent copies of the read-only cookie exports.
+    media_cookie_jar_dir: str = "data/cookies"
+    media_cookie_jar_reset: bool = False
     local_media_max_bytes: int = Field(default=1_900_000_000, gt=0)
     local_media_max_duration_seconds: int = Field(default=14_400, gt=0)
     db_path: str = "AI_module/bot_talker_memory.db"
