@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import re
 import shutil
@@ -16,6 +17,7 @@ from typing import AsyncIterator, Mapping
 
 import yt_dlp
 from aiogram import types
+from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 from yt_dlp.utils import DownloadError
 
@@ -473,6 +475,7 @@ class YtDlpMediaAdapter:
         urls: tuple[str, ...],
         *,
         reply_to_source: bool = True,
+        include_source_attribution: bool = False,
     ) -> MediaDeliveryResult:
         delivered_urls: list[str] = []
         for url in urls:
@@ -486,6 +489,11 @@ class YtDlpMediaAdapter:
                         message,
                         media,
                         reply_to_source=reply_to_source,
+                        caption=(
+                            self._source_attribution_caption(message, url)
+                            if include_source_attribution
+                            else None
+                        ),
                     )
                 delivered_urls.append(url)
             except MediaTooLongError:
@@ -534,22 +542,29 @@ class YtDlpMediaAdapter:
         media: DownloadedMedia,
         *,
         reply_to_source: bool = True,
+        caption: str | None = None,
     ) -> None:
         """Send one file or albums of up to Telegram's ten-item limit."""
         pending_album: list[DownloadedMediaItem] = []
+        caption_for_next_send = caption
         for item in media.items:
             if item.kind is MediaKind.DOCUMENT:
                 await self._send_album_or_item(
                     message,
                     pending_album,
                     reply_to_source=reply_to_source,
+                    caption=caption_for_next_send,
                 )
+                if pending_album:
+                    caption_for_next_send = None
                 pending_album.clear()
                 await self._send_item(
                     message,
                     item,
                     reply_to_source=reply_to_source,
+                    caption=caption_for_next_send,
                 )
+                caption_for_next_send = None
                 continue
 
             pending_album.append(item)
@@ -558,13 +573,16 @@ class YtDlpMediaAdapter:
                     message,
                     pending_album,
                     reply_to_source=reply_to_source,
+                    caption=caption_for_next_send,
                 )
+                caption_for_next_send = None
                 pending_album.clear()
 
         await self._send_album_or_item(
             message,
             pending_album,
             reply_to_source=reply_to_source,
+            caption=caption_for_next_send,
         )
 
     async def _send_album_or_item(
@@ -573,6 +591,7 @@ class YtDlpMediaAdapter:
         items: list[DownloadedMediaItem],
         *,
         reply_to_source: bool,
+        caption: str | None = None,
     ) -> None:
         if not items:
             return
@@ -581,11 +600,17 @@ class YtDlpMediaAdapter:
                 message,
                 items[0],
                 reply_to_source=reply_to_source,
+                caption=caption,
             )
             return
 
         send = message.reply_media_group if reply_to_source else message.answer_media_group
-        await send(media=[self._to_input_media(item) for item in items])
+        await send(
+            media=[
+                self._to_input_media(item, caption=caption if index == 0 else None)
+                for index, item in enumerate(items)
+            ]
+        )
 
     async def _send_item(
         self,
@@ -593,17 +618,19 @@ class YtDlpMediaAdapter:
         item: DownloadedMediaItem,
         *,
         reply_to_source: bool,
+        caption: str | None = None,
     ) -> None:
         source = FSInputFile(item.path, chunk_size=self._upload_chunk_size)
+        kwargs = {"caption": caption, "parse_mode": ParseMode.HTML} if caption else {}
         if item.kind is MediaKind.PHOTO:
             send = message.reply_photo if reply_to_source else message.answer_photo
-            await send(photo=source)
+            await send(photo=source, **kwargs)
         elif item.kind is MediaKind.VIDEO:
             send = message.reply_video if reply_to_source else message.answer_video
-            await send(video=source)
+            await send(video=source, **kwargs)
         else:
             send = message.reply_document if reply_to_source else message.answer_document
-            await send(document=source)
+            await send(document=source, **kwargs)
 
     @staticmethod
     async def _send_status(
@@ -618,8 +645,22 @@ class YtDlpMediaAdapter:
     def _to_input_media(
         self,
         item: DownloadedMediaItem,
+        *,
+        caption: str | None = None,
     ) -> types.InputMediaPhoto | types.InputMediaVideo:
         source = FSInputFile(item.path, chunk_size=self._upload_chunk_size)
+        kwargs = {"caption": caption, "parse_mode": ParseMode.HTML} if caption else {}
         if item.kind is MediaKind.PHOTO:
-            return types.InputMediaPhoto(media=source)
-        return types.InputMediaVideo(media=source)
+            return types.InputMediaPhoto(media=source, **kwargs)
+        return types.InputMediaVideo(media=source, **kwargs)
+
+    @staticmethod
+    def _source_attribution_caption(message: types.Message, source_url: str) -> str:
+        sender = message.from_user
+        if sender is None:
+            author = "участник чата"
+        else:
+            name = html.escape(sender.full_name[:80], quote=False)
+            author = f'<a href="tg://user?id={sender.id}">{name}</a>'
+        url = html.escape(source_url, quote=True)
+        return f'От {author} · <a href="{url}">Источник</a>'

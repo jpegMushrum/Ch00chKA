@@ -58,6 +58,7 @@ class MediaAdapter(Protocol):
         urls: tuple[str, ...],
         *,
         reply_to_source: bool = True,
+        include_source_attribution: bool = False,
     ) -> MediaDeliveryResult: ...
 
 
@@ -68,6 +69,7 @@ class NoopMediaAdapter:
         urls: tuple[str, ...],
         *,
         reply_to_source: bool = True,
+        include_source_attribution: bool = False,
     ) -> MediaDeliveryResult:
         return MediaDeliveryResult(requested_urls=urls, delivered_urls=())
 
@@ -546,6 +548,7 @@ def create_router(
                     message,
                     media_urls,
                     reply_to_source=not delete_source_when_delivered,
+                    include_source_attribution=delete_source_when_delivered,
                 )
                 if delete_source_when_delivered and delivery.all_delivered:
                     await _delete_source_message(message)

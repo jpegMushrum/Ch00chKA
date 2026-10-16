@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from yt_dlp.utils import DownloadError
@@ -253,27 +254,34 @@ class MediaDownloaderTests(unittest.TestCase):
 class _RecordingMessage:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
+        self.send_kwargs: list[tuple[str, dict[str, object]]] = []
 
-    async def reply_photo(self, *, photo):
+    async def reply_photo(self, *, photo, **kwargs):
         self.calls.append(("photo", photo))
+        self.send_kwargs.append(("photo", kwargs))
 
-    async def reply_video(self, *, video):
+    async def reply_video(self, *, video, **kwargs):
         self.calls.append(("video", video))
+        self.send_kwargs.append(("video", kwargs))
 
-    async def reply_document(self, *, document):
+    async def reply_document(self, *, document, **kwargs):
         self.calls.append(("document", document))
+        self.send_kwargs.append(("document", kwargs))
 
     async def reply_media_group(self, *, media):
         self.calls.append(("album", media))
 
-    async def answer_photo(self, *, photo):
+    async def answer_photo(self, *, photo, **kwargs):
         self.calls.append(("answer_photo", photo))
+        self.send_kwargs.append(("answer_photo", kwargs))
 
-    async def answer_video(self, *, video):
+    async def answer_video(self, *, video, **kwargs):
         self.calls.append(("answer_video", video))
+        self.send_kwargs.append(("answer_video", kwargs))
 
-    async def answer_document(self, *, document):
+    async def answer_document(self, *, document, **kwargs):
         self.calls.append(("answer_document", document))
+        self.send_kwargs.append(("answer_document", kwargs))
 
     async def answer_media_group(self, *, media):
         self.calls.append(("answer_album", media))
@@ -335,6 +343,31 @@ class MediaAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([kind for kind, _ in message.calls], ["answer_video"])
 
+    async def test_adds_sender_and_source_caption_before_deleting_source(self):
+        adapter = YtDlpMediaAdapter(downloader=_SuccessfulMediaDownloader(
+            DownloadedMedia(
+                items=(DownloadedMediaItem(Path("clip.mp4"), MediaKind.VIDEO),),
+                platform=MediaPlatform.TIKTOK,
+            )
+        ))
+        message = _RecordingMessage()
+        message.from_user = SimpleNamespace(id=42, full_name="<Рома>")
+
+        await adapter.handle(
+            message,
+            ("https://www.tiktok.com/@creator/video/123",),
+            reply_to_source=False,
+            include_source_attribution=True,
+        )
+
+        self.assertEqual([kind for kind, _ in message.calls], ["answer_video"])
+        caption = message.send_kwargs[0][1]["caption"]
+        self.assertEqual(
+            caption,
+            'От <a href="tg://user?id=42">&lt;Рома&gt;</a> · '
+            '<a href="https://www.tiktok.com/@creator/video/123">Источник</a>',
+        )
+
     async def test_splits_large_carousel_into_multiple_albums(self):
         adapter = YtDlpMediaAdapter(downloader=object())
         message = _RecordingMessage()
@@ -353,6 +386,23 @@ class MediaAdapterTests(unittest.IsolatedAsyncioTestCase):
             ["album", "album", "photo"],
         )
         self.assertEqual([len(payload) for _, payload in message.calls[:2]], [10, 10])
+
+    async def test_adds_caption_only_to_the_first_album(self):
+        adapter = YtDlpMediaAdapter(downloader=object())
+        message = _RecordingMessage()
+        media = DownloadedMedia(
+            items=tuple(
+                DownloadedMediaItem(Path(f"slide-{index}.jpg"), MediaKind.PHOTO)
+                for index in range(11)
+            ),
+            platform=MediaPlatform.INSTAGRAM,
+        )
+
+        await adapter._send_media(message, media, caption="Отправил <b>Рома</b>")
+
+        first_album = message.calls[0][1]
+        self.assertEqual(first_album[0].caption, "Отправил <b>Рома</b>")
+        self.assertEqual(message.send_kwargs[-1][1], {})
 
     async def test_reports_a_url_as_delivered_only_after_send_succeeds(self):
         media = DownloadedMedia(
